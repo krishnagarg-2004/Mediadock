@@ -35,6 +35,24 @@ class DummyMediaProvider(BaseMediaProvider):
     def set_on_session_availability_changed(self, callback) -> None:
         self.session_cb = callback
 
+    def play(self) -> bool:
+        return True
+
+    def pause(self) -> bool:
+        return True
+
+    def toggle_play_pause(self) -> bool:
+        return True
+
+    def next_track(self) -> bool:
+        return True
+
+    def previous_track(self) -> bool:
+        return True
+
+    def seek_to_position(self, position_ms: int) -> bool:
+        return True
+
 
 class TestBaseMediaProvider(unittest.TestCase):
     """Test suite for BaseMediaProvider abstraction."""
@@ -73,6 +91,16 @@ class TestBaseMediaProvider(unittest.TestCase):
         status = provider.get_playback_status()
         self.assertIsInstance(status, PlaybackStatus)
         self.assertEqual(status, PlaybackStatus.PLAYING)
+
+    def test_transport_controls(self) -> None:
+        """Verify concrete transport control methods return boolean values."""
+        provider = DummyMediaProvider()
+        self.assertTrue(provider.play())
+        self.assertTrue(provider.pause())
+        self.assertTrue(provider.toggle_play_pause())
+        self.assertTrue(provider.next_track())
+        self.assertTrue(provider.previous_track())
+        self.assertTrue(provider.seek_to_position(1000))
 
 
 if __name__ == "__main__":

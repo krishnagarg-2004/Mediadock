@@ -142,6 +142,33 @@ class GSMTCProvider(BaseMediaProvider):
         with self._lock:
             return self._is_session_available
 
+    # --- Transport Control Interface Stubs (Full winrt implementation in Step 2) ---
+
+    def play(self) -> bool:
+        """Request active media player to resume playback."""
+        return False
+
+    def pause(self) -> bool:
+        """Request active media player to pause playback."""
+        return False
+
+    def toggle_play_pause(self) -> bool:
+        """Toggle between play and pause state."""
+        return False
+
+    def next_track(self) -> bool:
+        """Request active media player to skip to the next track."""
+        return False
+
+    def previous_track(self) -> bool:
+        """Request active media player to skip to the previous track."""
+        return False
+
+    def seek_to_position(self, position_ms: int) -> bool:
+        """Request active media player to seek to a specific position in milliseconds."""
+        return False
+
+
     # --- Callback Registration Setters ---
 
     def set_on_track_changed(self, callback: Optional[TrackCallback]) -> None:

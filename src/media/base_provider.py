@@ -48,3 +48,35 @@ class BaseMediaProvider(ABC):
     ) -> None:
         """Register callback for session availability change events."""
         pass
+
+    # --- Transport Control Interface ---
+
+    @abstractmethod
+    def play(self) -> bool:
+        """Request active media player to resume playback. Returns True if command was dispatched."""
+        pass
+
+    @abstractmethod
+    def pause(self) -> bool:
+        """Request active media player to pause playback. Returns True if command was dispatched."""
+        pass
+
+    @abstractmethod
+    def toggle_play_pause(self) -> bool:
+        """Toggle between play and pause state. Returns True if command was dispatched."""
+        pass
+
+    @abstractmethod
+    def next_track(self) -> bool:
+        """Request active media player to skip to the next track. Returns True if command was dispatched."""
+        pass
+
+    @abstractmethod
+    def previous_track(self) -> bool:
+        """Request active media player to skip to the previous track. Returns True if command was dispatched."""
+        pass
+
+    @abstractmethod
+    def seek_to_position(self, position_ms: int) -> bool:
+        """Request active media player to seek to a specific position in milliseconds. Returns True if command was dispatched."""
+        pass

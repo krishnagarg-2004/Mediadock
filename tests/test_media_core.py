@@ -48,6 +48,25 @@ class DummyProvider(BaseMediaProvider):
     def set_on_session_availability_changed(self, callback) -> None:
         self.session_cb = callback
 
+    def play(self) -> bool:
+        return True
+
+    def pause(self) -> bool:
+        return True
+
+    def toggle_play_pause(self) -> bool:
+        return True
+
+    def next_track(self) -> bool:
+        return True
+
+    def previous_track(self) -> bool:
+        return True
+
+    def seek_to_position(self, position_ms: int) -> bool:
+        return True
+
+
 
 class TestMediaCore(unittest.TestCase):
     """Test suite for MediaCore signal emissions, lifecycle, and provider delegation."""
