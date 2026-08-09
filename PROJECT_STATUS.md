@@ -1,22 +1,22 @@
 # Project Status
 
 Current Milestone:
-Milestone 2 — Windows Media Detection (In Progress - Step 1 Complete)
+Milestone 2 — Windows Media Detection (In Progress - Step 2 Complete)
 
 Current Task:
-Step 2 — Implement BaseMediaProvider Abstract Class
+Step 3 — Implement GSMTCProvider WinRT Media Listener
 
 Completed:
 - Project Bible created
 - Repository initialized
 - Milestone 1 Foundation completed (`FramelessWindow`, `MainWindow`, PySide6 entry point)
-- Milestone 2 / Step 1: Specified & installed PyWinRT dependencies (`winrt-Windows.Media.Control>=3.0.0`, `winrt-Windows.Storage.Streams>=3.0.0`) in `.venv`
-- Milestone 2 / Step 1: Implemented framework-agnostic domain data models (`TrackInfo`, `PlaybackStatus`) in [src/core/models.py](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/src/core/models.py)
-- Milestone 2 / Step 1: Added & verified unit test suite in [tests/test_models.py](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/tests/test_models.py)
-- Milestone 2 / Step 1: Verified PyWinRT package imports in Python 3.14 environment
+- Milestone 2 / Step 1: PyWinRT dependencies (`winrt-Windows.Media.Control`, `winrt-Windows.Storage.Streams`) installed & verified
+- Milestone 2 / Step 1: Framework-agnostic domain data models (`TrackInfo`, `PlaybackStatus`) implemented in [src/core/models.py](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/src/core/models.py)
+- Milestone 2 / Step 2: Abstract base class `BaseMediaProvider` implemented in [src/media/base_provider.py](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/src/media/base_provider.py)
+- Milestone 2 / Step 2: Test suite added in [tests/test_base_provider.py](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/tests/test_base_provider.py) (12 tests total passing)
 
 Next:
-- Step 2: Implement `BaseMediaProvider` abstract class (`src/media/base_provider.py`)
+- Step 3: Implement `GSMTCProvider` WinRT media listener (`src/media/gsmtc_provider.py`)
 
 Known Issues:
 None

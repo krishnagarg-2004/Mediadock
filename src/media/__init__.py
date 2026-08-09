@@ -1,0 +1,1 @@
+"""MediaDock media provider package."""
