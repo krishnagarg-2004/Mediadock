@@ -1,7 +1,12 @@
 """Abstract base class for media detection providers."""
 
 from abc import ABC, abstractmethod
+from typing import Optional, Callable
 from src.core.models import TrackInfo, PlaybackStatus
+
+TrackCallback = Callable[[TrackInfo], None]
+StatusCallback = Callable[[PlaybackStatus], None]
+SessionAvailabilityCallback = Callable[[bool], None]
 
 
 class BaseMediaProvider(ABC):
@@ -25,4 +30,21 @@ class BaseMediaProvider(ABC):
     @abstractmethod
     def stop_listening(self) -> None:
         """Unregister event listeners and clean up provider resources."""
+        pass
+
+    @abstractmethod
+    def set_on_track_changed(self, callback: Optional[TrackCallback]) -> None:
+        """Register callback for track change events."""
+        pass
+
+    @abstractmethod
+    def set_on_status_changed(self, callback: Optional[StatusCallback]) -> None:
+        """Register callback for playback status change events."""
+        pass
+
+    @abstractmethod
+    def set_on_session_availability_changed(
+        self, callback: Optional[SessionAvailabilityCallback]
+    ) -> None:
+        """Register callback for session availability change events."""
         pass

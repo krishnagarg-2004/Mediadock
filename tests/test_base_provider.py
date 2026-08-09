@@ -10,6 +10,9 @@ class DummyMediaProvider(BaseMediaProvider):
 
     def __init__(self) -> None:
         self.is_active = False
+        self.track_cb = None
+        self.status_cb = None
+        self.session_cb = None
 
     def get_current_track(self) -> TrackInfo:
         return TrackInfo(title="Test Title", artist="Test Artist")
@@ -22,6 +25,15 @@ class DummyMediaProvider(BaseMediaProvider):
 
     def stop_listening(self) -> None:
         self.is_active = False
+
+    def set_on_track_changed(self, callback) -> None:
+        self.track_cb = callback
+
+    def set_on_status_changed(self, callback) -> None:
+        self.status_cb = callback
+
+    def set_on_session_availability_changed(self, callback) -> None:
+        self.session_cb = callback
 
 
 class TestBaseMediaProvider(unittest.TestCase):
