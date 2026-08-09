@@ -1,6 +1,7 @@
 """Application entry point for MediaDock."""
 
 import sys
+from typing import Optional
 from PySide6.QtWidgets import QApplication
 
 from src.core.settings import SettingsManager
@@ -9,19 +10,21 @@ from src.core.media_core import MediaCore
 from src.ui.main_window import MainWindow
 from src.ui.system_tray import SystemTrayIcon
 from src.ui.settings_dialog import SettingsDialog
+from src.ui.hotkeys import GlobalHotkeyManager
 
 
 def main() -> int:
-    """Initialize QApplication, SettingsManager, SystemTrayIcon, MainWindow, and start event loop."""
+    """Initialize QApplication, SettingsManager, SystemTrayIcon, MainWindow, GlobalHotkeyManager, and start event loop."""
     app = QApplication(sys.argv)
     app.setApplicationName("MediaDock")
     app.setOrganizationName("KrishnaOS")
     app.setQuitOnLastWindowClosed(False)
 
-    # Instantiate settings, media infrastructure, and application coordinator
+    # Instantiate settings, media infrastructure, application coordinator, and hotkey manager
     settings_manager = SettingsManager()
     provider = GSMTCProvider()
     media_core = MediaCore(provider=provider)
+    hotkey_manager = GlobalHotkeyManager()
 
     # Instantiate GUI window and SystemTrayIcon
     window = MainWindow(media_core=media_core, settings_manager=settings_manager)
@@ -61,11 +64,16 @@ def main() -> int:
     tray_icon.settings_requested.connect(open_settings_dialog)
     tray_icon.exit_requested.connect(app.quit)
 
+    # Connect global hotkey signals
+    hotkey_manager.show_hide_requested.connect(toggle_window_visibility)
+    hotkey_manager.play_pause_requested.connect(media_core.toggle_play_pause)
 
-    # Start media detection
+    # Start media detection and global hotkeys
     media_core.start()
+    hotkey_manager.start()
 
-    # Ensure clean provider shutdown on application exit
+    # Ensure clean provider and hotkey shutdown on application exit
+    app.aboutToQuit.connect(hotkey_manager.stop)
     app.aboutToQuit.connect(media_core.stop)
 
     # Apply start_hidden setting
