@@ -37,7 +37,11 @@ def main() -> int:
     def open_settings_dialog() -> None:
         nonlocal settings_dialog
         if settings_dialog is None or not settings_dialog.isVisible():
-            settings_dialog = SettingsDialog(settings_manager=settings_manager, parent=window)
+            settings_dialog = SettingsDialog(
+                settings_manager=settings_manager,
+                hotkey_manager=hotkey_manager,
+                parent=window,
+            )
             settings_dialog.show()
         settings_dialog.raise_()
         settings_dialog.activateWindow()
@@ -68,9 +72,13 @@ def main() -> int:
     hotkey_manager.show_hide_requested.connect(toggle_window_visibility)
     hotkey_manager.play_pause_requested.connect(media_core.toggle_play_pause)
 
-    # Start media detection and global hotkeys
+    # Start media detection and global hotkeys using persisted settings
+    sh_hk = settings_manager.get_hotkey_show_hide()
+    pp_hk = settings_manager.get_hotkey_play_pause()
+
     media_core.start()
-    hotkey_manager.start()
+    hotkey_manager.start(show_hide_seq=sh_hk, play_pause_seq=pp_hk)
+
 
     # Ensure clean provider and hotkey shutdown on application exit
     app.aboutToQuit.connect(hotkey_manager.stop)

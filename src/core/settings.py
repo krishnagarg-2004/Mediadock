@@ -43,7 +43,10 @@ class SettingsManager(QObject):
         "window/remember_position": True,
         "window/pos_x": -1,
         "window/pos_y": -1,
+        "hotkeys/show_hide": "Ctrl+Alt+M",
+        "hotkeys/play_pause": "Ctrl+Alt+Space",
     }
+
 
     def __init__(
         self,
@@ -140,6 +143,22 @@ class SettingsManager(QObject):
         """Save window screen position (x, y) coordinates."""
         self.set("window/pos_x", int(x))
         self.set("window/pos_y", int(y))
+
+    def get_hotkey_show_hide(self) -> str:
+        """Return global hotkey sequence string for Show/Hide window."""
+        return str(self.get("hotkeys/show_hide"))
+
+    def set_hotkey_show_hide(self, sequence: str) -> None:
+        """Set global hotkey sequence string for Show/Hide window."""
+        self.set("hotkeys/show_hide", str(sequence))
+
+    def get_hotkey_play_pause(self) -> str:
+        """Return global hotkey sequence string for Toggle Play/Pause."""
+        return str(self.get("hotkeys/play_pause"))
+
+    def set_hotkey_play_pause(self, sequence: str) -> None:
+        """Set global hotkey sequence string for Toggle Play/Pause."""
+        self.set("hotkeys/play_pause", str(sequence))
 
     def clear(self) -> None:
         """Reset all stored settings in the QSettings store."""

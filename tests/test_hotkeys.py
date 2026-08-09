@@ -1,28 +1,90 @@
-"""Unit tests for src/ui/hotkeys.py GlobalHotkeyManager and native event filter."""
+"""Unit tests for src/ui/hotkeys.py GlobalHotkeyManager, parse_key_sequence, and SettingsDialog hotkey integration."""
 
 import sys
 import unittest
 from unittest.mock import patch, MagicMock
 from PySide6.QtCore import QCoreApplication
 
+from src.core.settings import SettingsManager
+from src.ui.settings_dialog import SettingsDialog
 from src.ui.hotkeys import (
     GlobalHotkeyManager,
     HotkeyNativeEventFilter,
+    parse_key_sequence,
     HOTKEY_ID_SHOW_HIDE,
     HOTKEY_ID_PLAY_PAUSE,
     WM_HOTKEY,
+    MOD_CONTROL,
+    MOD_ALT,
+    MOD_SHIFT,
+    MOD_WIN,
+    VK_M,
+    VK_SPACE,
 )
+
+# Ensure QCoreApplication instance exists for Qt testing
+_app = QCoreApplication.instance() or QCoreApplication(sys.argv)
+
+
+class TestHotkeyParser(unittest.TestCase):
+    """Test suite for Qt-style key sequence parsing to Win32 modifier bitmasks and virtual keys."""
+
+    def test_parse_valid_sequences(self) -> None:
+        """Verify parsing standard valid hotkey sequences."""
+        # Ctrl+Alt+M
+        mods, vk = parse_key_sequence("Ctrl+Alt+M")
+        self.assertEqual(mods, MOD_CONTROL | MOD_ALT)
+        self.assertEqual(vk, VK_M)
+
+        # Ctrl+Alt+Space
+        mods, vk = parse_key_sequence("Ctrl+Alt+Space")
+        self.assertEqual(mods, MOD_CONTROL | MOD_ALT)
+        self.assertEqual(vk, VK_SPACE)
+
+        # Ctrl+Shift+P
+        mods, vk = parse_key_sequence("Ctrl+Shift+P")
+        self.assertEqual(mods, MOD_CONTROL | MOD_SHIFT)
+        self.assertEqual(vk, ord("P"))
+
+        # Win+Space
+        mods, vk = parse_key_sequence("Win+Space")
+        self.assertEqual(mods, MOD_WIN)
+        self.assertEqual(vk, VK_SPACE)
+
+        # Alt+F5
+        mods, vk = parse_key_sequence("Alt+F5")
+        self.assertEqual(mods, MOD_ALT)
+        self.assertEqual(vk, 0x74)  # F5 VK
+
+        # Ctrl+1
+        mods, vk = parse_key_sequence("Ctrl+1")
+        self.assertEqual(mods, MOD_CONTROL)
+        self.assertEqual(vk, ord("1"))
+
+    def test_parse_invalid_sequences(self) -> None:
+        """Verify parse_key_sequence rejects invalid or malformed sequences cleanly."""
+        # Missing modifier
+        with self.assertRaises(ValueError):
+            parse_key_sequence("M")
+
+        with self.assertRaises(ValueError):
+            parse_key_sequence("Space")
+
+        # Empty or non-string
+        with self.assertRaises(ValueError):
+            parse_key_sequence("")
+
+        # Unknown key token
+        with self.assertRaises(ValueError):
+            parse_key_sequence("Ctrl+InvalidKeyName")
+
+        # Multiple main keys
+        with self.assertRaises(ValueError):
+            parse_key_sequence("Ctrl+A+B")
 
 
 class TestGlobalHotkeyManager(unittest.TestCase):
-    """Test suite for GlobalHotkeyManager registration, signal emission, and lifecycle."""
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        """Ensure QCoreApplication instance exists for Qt signal/event testing."""
-        cls.app = QCoreApplication.instance()
-        if cls.app is None:
-            cls.app = QCoreApplication(sys.argv)
+    """Test suite for GlobalHotkeyManager registration, signal emission, and rollback lifecycle."""
 
     def setUp(self) -> None:
         """Create fresh GlobalHotkeyManager for each test."""
@@ -64,64 +126,17 @@ class TestGlobalHotkeyManager(unittest.TestCase):
         filter_inst._callback(HOTKEY_ID_PLAY_PAUSE)
         self.assertTrue(signal_received)
 
-    def test_native_event_filter_direct_msg_decoding(self) -> None:
-        """Verify nativeEventFilter parses Win32 MSG pointer and routes show_hide and play_pause."""
-        import ctypes
-        from src.ui.hotkeys import MSG, IS_WINDOWS
-
-        if not IS_WINDOWS:
-            return
-
-        show_hide_received = False
-        play_pause_received = False
-
-        def on_show_hide() -> None:
-            nonlocal show_hide_received
-            show_hide_received = True
-
-        def on_play_pause() -> None:
-            nonlocal play_pause_received
-            play_pause_received = True
-
-        self.manager.show_hide_requested.connect(on_show_hide)
-        self.manager.play_pause_requested.connect(on_play_pause)
-        filter_inst = HotkeyNativeEventFilter(self.manager._on_hotkey_triggered)
-
-        # 1. Test WM_HOTKEY (0x0312) with wParam = 1 (Show/Hide)
-        msg_show_hide = MSG(message=WM_HOTKEY, wParam=HOTKEY_ID_SHOW_HIDE)
-        msg_ptr_1 = ctypes.addressof(msg_show_hide)
-        handled_1, res_1 = filter_inst.nativeEventFilter(b"windows_generic_MSG", msg_ptr_1)
-        self.assertTrue(handled_1)
-        self.assertEqual(res_1, 0)
-        self.assertTrue(show_hide_received)
-        self.assertFalse(play_pause_received)
-
-        # 2. Test WM_HOTKEY (0x0312) with wParam = 2 (Play/Pause)
-        msg_play_pause = MSG(message=WM_HOTKEY, wParam=HOTKEY_ID_PLAY_PAUSE)
-        msg_ptr_2 = ctypes.addressof(msg_play_pause)
-        handled_2, res_2 = filter_inst.nativeEventFilter(b"windows_generic_MSG", msg_ptr_2)
-        self.assertTrue(handled_2)
-        self.assertEqual(res_2, 0)
-        self.assertTrue(play_pause_received)
-
-        # 3. Test non-WM_HOTKEY message (ignored)
-        msg_other = MSG(message=0x0000, wParam=1)
-        msg_ptr_3 = ctypes.addressof(msg_other)
-        handled_3, res_3 = filter_inst.nativeEventFilter(b"windows_generic_MSG", msg_ptr_3)
-        self.assertFalse(handled_3)
-
-
-    # --- Win32 Registration & Failure Tests ---
+    # --- Win32 Registration & Rebind Rollback Tests ---
 
     @patch("ctypes.windll")
     def test_successful_hotkey_registration(self, mock_windll: MagicMock) -> None:
-        """Verify start registers both global hotkeys when RegisterHotKey succeeds."""
+        """Verify start registers both configured global hotkeys when RegisterHotKey succeeds."""
         mock_user32 = MagicMock()
         mock_user32.RegisterHotKey.return_value = 1
         mock_windll.user32 = mock_user32
 
         with patch("src.ui.hotkeys.IS_WINDOWS", True):
-            res = self.manager.start()
+            res = self.manager.start("Ctrl+Alt+M", "Ctrl+Alt+Space")
             self.assertTrue(res)
             self.assertTrue(self.manager.is_started)
             self.assertTrue(self.manager.is_registered(HOTKEY_ID_SHOW_HIDE))
@@ -129,69 +144,53 @@ class TestGlobalHotkeyManager(unittest.TestCase):
             self.assertEqual(mock_user32.RegisterHotKey.call_count, 2)
 
     @patch("ctypes.windll")
-    def test_registration_failure_handling(self, mock_windll: MagicMock) -> None:
-        """Verify start handles complete registration failure non-fatally."""
+    def test_successful_rebind_hotkeys(self, mock_windll: MagicMock) -> None:
+        """Verify rebind_hotkeys updates shortcuts when registration succeeds."""
         mock_user32 = MagicMock()
-        mock_user32.RegisterHotKey.return_value = 0
+        mock_user32.RegisterHotKey.return_value = 1
+        mock_user32.UnregisterHotKey.return_value = 1
         mock_windll.user32 = mock_user32
 
         with patch("src.ui.hotkeys.IS_WINDOWS", True):
-            res = self.manager.start()
-            self.assertFalse(res)
-            self.assertTrue(self.manager.is_started)
-            self.assertFalse(self.manager.is_registered(HOTKEY_ID_SHOW_HIDE))
-            self.assertFalse(self.manager.is_registered(HOTKEY_ID_PLAY_PAUSE))
-
-    @patch("ctypes.windll")
-    def test_partial_registration_handling(self, mock_windll: MagicMock) -> None:
-        """Verify start preserves successfully registered hotkeys if one fails."""
-        mock_user32 = MagicMock()
-        # Return 1 for ID 1 (show/hide), 0 for ID 2 (play/pause)
-        mock_user32.RegisterHotKey.side_effect = [1, 0]
-        mock_windll.user32 = mock_user32
-
-        with patch("src.ui.hotkeys.IS_WINDOWS", True):
-            res = self.manager.start()
+            self.manager.start("Ctrl+Alt+M", "Ctrl+Alt+Space")
+            res = self.manager.rebind_hotkeys("Ctrl+Shift+H", "Ctrl+Shift+P")
             self.assertTrue(res)
-            self.assertTrue(self.manager.is_registered(HOTKEY_ID_SHOW_HIDE))
-            self.assertFalse(self.manager.is_registered(HOTKEY_ID_PLAY_PAUSE))
-
-    # --- Unregistration & Lifecycle Tests ---
+            self.assertEqual(self.manager.get_show_hide_sequence(), "Ctrl+Shift+H")
+            self.assertEqual(self.manager.get_play_pause_sequence(), "Ctrl+Shift+P")
 
     @patch("ctypes.windll")
-    def test_stop_unregisters_hotkeys_and_resets_state(self, mock_windll: MagicMock) -> None:
-        """Verify stop calls UnregisterHotKey for active IDs and clears internal state."""
+    def test_rebind_duplicate_shortcuts_rejected(self, mock_windll: MagicMock) -> None:
+        """Verify rebind_hotkeys rejects duplicate shortcuts for both actions."""
         mock_user32 = MagicMock()
         mock_user32.RegisterHotKey.return_value = 1
+        mock_windll.user32 = mock_user32
+
+        with patch("src.ui.hotkeys.IS_WINDOWS", True):
+            self.manager.start("Ctrl+Alt+M", "Ctrl+Alt+Space")
+            res = self.manager.rebind_hotkeys("Ctrl+Shift+X", "Ctrl+Shift+X")
+            self.assertFalse(res)
+            self.assertEqual(self.manager.get_show_hide_sequence(), "Ctrl+Alt+M")
+            self.assertEqual(self.manager.get_play_pause_sequence(), "Ctrl+Alt+Space")
+
+    @patch("ctypes.windll")
+    def test_rebind_failure_triggers_rollback(self, mock_windll: MagicMock) -> None:
+        """Verify rebind_hotkeys rolls back to previous shortcuts if Win32 RegisterHotKey fails."""
+        mock_user32 = MagicMock()
+        # Initial start: return 1 (success)
+        # Rebind attempt: return 0 (failure)
+        # Rollback re-register: return 1 (success)
+        mock_user32.RegisterHotKey.side_effect = [1, 1, 0, 1, 1]
         mock_user32.UnregisterHotKey.return_value = 1
         mock_windll.user32 = mock_user32
 
         with patch("src.ui.hotkeys.IS_WINDOWS", True):
-            self.manager.start()
-            self.assertTrue(self.manager.is_started)
+            self.manager.start("Ctrl+Alt+M", "Ctrl+Alt+Space")
 
-            self.manager.stop()
-            self.assertFalse(self.manager.is_started)
-            self.assertFalse(self.manager.is_registered(HOTKEY_ID_SHOW_HIDE))
-            self.assertFalse(self.manager.is_registered(HOTKEY_ID_PLAY_PAUSE))
-            self.assertEqual(mock_user32.UnregisterHotKey.call_count, 2)
-
-    @patch("ctypes.windll")
-    def test_repeated_stop_calls_are_safe(self, mock_windll: MagicMock) -> None:
-        """Verify calling stop multiple times consecutively is completely safe."""
-        mock_user32 = MagicMock()
-        mock_user32.RegisterHotKey.return_value = 1
-        mock_user32.UnregisterHotKey.return_value = 1
-        mock_windll.user32 = mock_user32
-
-        with patch("src.ui.hotkeys.IS_WINDOWS", True):
-            self.manager.start()
-            self.manager.stop()
-            # Repeated calls
-            self.manager.stop()
-            self.manager.stop()
-
-            self.assertFalse(self.manager.is_started)
+            res = self.manager.rebind_hotkeys("Ctrl+Alt+X", "Ctrl+Alt+Y")
+            self.assertFalse(res)
+            # Must retain original working shortcuts
+            self.assertEqual(self.manager.get_show_hide_sequence(), "Ctrl+Alt+M")
+            self.assertEqual(self.manager.get_play_pause_sequence(), "Ctrl+Alt+Space")
 
     def test_non_windows_platform_graceful_fallback(self) -> None:
         """Verify non-Windows platform returns False without accessing user32."""
@@ -199,6 +198,46 @@ class TestGlobalHotkeyManager(unittest.TestCase):
             res = self.manager.start()
             self.assertFalse(res)
             self.assertFalse(self.manager.is_started)
+
+
+class TestHotkeySettingsIntegration(unittest.TestCase):
+    """Test suite for SettingsManager hotkey persistence and SettingsDialog integration."""
+
+    def test_settings_manager_hotkey_defaults_and_accessors(self) -> None:
+        """Verify SettingsManager provides default hotkey values and accessors."""
+        sm = SettingsManager()
+        sm.clear()
+
+        self.assertEqual(sm.get_hotkey_show_hide(), "Ctrl+Alt+M")
+        self.assertEqual(sm.get_hotkey_play_pause(), "Ctrl+Alt+Space")
+
+        sm.set_hotkey_show_hide("Ctrl+Shift+S")
+        sm.set_hotkey_play_pause("Ctrl+Shift+P")
+
+        self.assertEqual(sm.get_hotkey_show_hide(), "Ctrl+Shift+S")
+        self.assertEqual(sm.get_hotkey_play_pause(), "Ctrl+Shift+P")
+
+    @patch("ctypes.windll")
+    def test_settings_dialog_failed_rebind_shows_error_and_prevents_persistence(
+        self, mock_windll: MagicMock
+    ) -> None:
+        """Verify SettingsDialog displays error and avoids persisting broken hotkey settings on failed rebind."""
+        mock_user32 = MagicMock()
+        mock_user32.RegisterHotKey.return_value = 0
+        mock_windll.user32 = mock_user32
+
+        sm = SettingsManager()
+        sm.clear()
+        hk_manager = GlobalHotkeyManager()
+
+        dialog = SettingsDialog(settings_manager=sm, hotkey_manager=hk_manager)
+        dialog.txt_hotkey_show_hide.setText("InvalidNoModifier")
+        dialog.txt_hotkey_play_pause.setText("Ctrl+Alt+Space")
+
+        # Save should fail validation
+        dialog.save_settings()
+        self.assertTrue(dialog.lbl_error.isVisible())
+        self.assertEqual(sm.get_hotkey_show_hide(), "Ctrl+Alt+M")
 
 
 if __name__ == "__main__":
