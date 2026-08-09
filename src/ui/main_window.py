@@ -9,6 +9,12 @@ from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushBu
 from src.core.models import TrackInfo, PlaybackStatus
 from src.core.media_core import MediaCore
 from src.ui.frameless_window import FramelessWindow
+from src.ui.components import ElidedLabel
+from src.ui.theme import (
+    get_button_stylesheet,
+    get_slider_stylesheet,
+    get_status_badge_style,
+)
 
 
 def _format_time_ms(ms: int) -> str:
@@ -56,8 +62,8 @@ class MainWindow(FramelessWindow):
             self._connect_media_core()
 
     def _create_default_art_pixmap(self) -> QPixmap:
-        """Generate a clean 80x80 default placeholder pixmap for missing artwork."""
-        pixmap = QPixmap(80, 80)
+        """Generate a clean 72x72 default placeholder pixmap for missing artwork."""
+        pixmap = QPixmap(72, 72)
         pixmap.fill(QColor("#313244"))
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -67,6 +73,7 @@ class MainWindow(FramelessWindow):
         painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "♪")
         painter.end()
         return pixmap
+
 
     def _init_ui(self) -> None:
         """Initialize the widget layout, metadata labels, transport buttons, and progress slider."""
@@ -92,22 +99,23 @@ class MainWindow(FramelessWindow):
         info_layout.setSpacing(4)
         info_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        self.title_label = QLabel("MediaDock", self)
+        self.title_label = ElidedLabel("MediaDock", self)
         title_font = QFont("Segoe UI", 10, QFont.Weight.Bold)
         self.title_label.setFont(title_font)
         self.title_label.setStyleSheet("color: #FFFFFF;")
-        self.title_label.setWordWrap(False)
 
-        self.artist_label = QLabel("No Media Playing", self)
+        self.artist_label = ElidedLabel("No Media Playing", self)
         sub_font = QFont("Segoe UI", 9)
         self.artist_label.setFont(sub_font)
         self.artist_label.setStyleSheet("color: #A6ADC8;")
-        self.artist_label.setWordWrap(False)
 
         self.status_label = QLabel("CLOSED", self)
         status_font = QFont("Segoe UI", 8, QFont.Weight.Bold)
         self.status_label.setFont(status_font)
-        self.status_label.setStyleSheet("color: #6C7086;")
+        text, text_hex, bg_hex = get_status_badge_style(PlaybackStatus.CLOSED)
+        self.status_label.setStyleSheet(
+            f"color: {text_hex}; background-color: {bg_hex}; border-radius: 4px; padding: 2px 6px;"
+        )
 
         # Transport Controls Row
         controls_layout = QHBoxLayout()
@@ -115,19 +123,7 @@ class MainWindow(FramelessWindow):
         controls_layout.setSpacing(8)
         controls_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
-        btn_style = (
-            "QPushButton {"
-            "  background-color: #313244;"
-            "  color: #CDD6F4;"
-            "  border: none;"
-            "  border-radius: 4px;"
-            "  font-size: 12px;"
-            "  font-weight: bold;"
-            "}"
-            "QPushButton:hover { background-color: #45475A; }"
-            "QPushButton:pressed { background-color: #585B70; }"
-            "QPushButton:disabled { color: #585B70; background-color: #181825; }"
-        )
+        btn_style = get_button_stylesheet()
 
         self.btn_prev = QPushButton("⏮", self)
         self.btn_prev.setFixedSize(30, 24)
@@ -174,13 +170,7 @@ class MainWindow(FramelessWindow):
         self.progress_slider = QSlider(Qt.Orientation.Horizontal, self)
         self.progress_slider.setRange(0, 0)
         self.progress_slider.setValue(0)
-        self.progress_slider.setStyleSheet(
-            "QSlider::groove:horizontal { height: 4px; background: #313244; border-radius: 2px; }"
-            "QSlider::sub-page:horizontal { background: #89B4FA; border-radius: 2px; }"
-            "QSlider::handle:horizontal { background: #CDD6F4; width: 10px; margin-top: -3px; margin-bottom: -3px; border-radius: 5px; }"
-            "QSlider::handle:horizontal:hover { background: #B4BEFE; }"
-            "QSlider::disabled { opacity: 0.5; }"
-        )
+        self.progress_slider.setStyleSheet(get_slider_stylesheet())
 
         # Seeking State Machine Connections
         self.progress_slider.sliderPressed.connect(self._on_slider_pressed)
@@ -284,25 +274,26 @@ class MainWindow(FramelessWindow):
     def on_status_changed(self, status: PlaybackStatus) -> None:
         """Slot for playback_status_changed signal. Updates status badge, play/pause button, and timer."""
         self._current_status = status
-        self.status_label.setText(status.value)
+
+        text, text_hex, bg_hex = get_status_badge_style(status)
+        self.status_label.setText(text)
+        self.status_label.setStyleSheet(
+            f"color: {text_hex}; background-color: {bg_hex}; border-radius: 4px; padding: 2px 6px;"
+        )
 
         if status == PlaybackStatus.PLAYING:
-            self.status_label.setStyleSheet("color: #A6E3A1;")  # Green
             self.btn_play_pause.setText("⏸")
             if self._duration_ms > 0 and not self._position_timer.isActive():
                 self._position_timer.start()
         elif status == PlaybackStatus.PAUSED:
-            self.status_label.setStyleSheet("color: #F9E2AF;")  # Yellow
             self.btn_play_pause.setText("▶")
             if self._position_timer.isActive():
                 self._position_timer.stop()
         elif status == PlaybackStatus.STOPPED:
-            self.status_label.setStyleSheet("color: #F38BA8;")  # Red
             self.btn_play_pause.setText("▶")
             if self._position_timer.isActive():
                 self._position_timer.stop()
         else:
-            self.status_label.setStyleSheet("color: #6C7086;")  # Muted Gray
             self.btn_play_pause.setText("▶")
             if self._position_timer.isActive():
                 self._position_timer.stop()

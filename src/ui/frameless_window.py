@@ -56,15 +56,22 @@ class FramelessWindow(QWidget):
             super().mouseReleaseEvent(event)
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        """Paint an anti-aliased rounded rectangle background for the window."""
+        """Paint an anti-aliased rounded rectangle background and subtle border stroke."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
+        rect = self.rect().adjusted(0, 0, -1, -1)
         path = QPainterPath()
         path.addRoundedRect(
-            self.rect().adjusted(0, 0, 0, 0),
+            rect,
             self._border_radius,
             self._border_radius,
         )
 
         painter.fillPath(path, self._bg_color)
+
+        # Subtle 1px border stroke (Catppuccin Border #45475A)
+        from PySide6.QtGui import QPen
+        pen = QPen(QColor("#45475A"), 1)
+        painter.setPen(pen)
+        painter.drawPath(path)

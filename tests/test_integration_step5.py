@@ -93,8 +93,8 @@ class TestStep5Integration(unittest.TestCase):
         core = MediaCore(provider=provider)
         window = MainWindow(media_core=core)
 
-        self.assertEqual(window.title_label.text(), "Initial Title")
-        self.assertEqual(window.artist_label.text(), "Initial Artist")
+        self.assertEqual(window.title_label.full_text(), "Initial Title")
+        self.assertEqual(window.artist_label.full_text(), "Initial Artist")
         self.assertEqual(window.status_label.text(), "PAUSED")
 
     def test_track_changed_slot_updates_ui(self) -> None:
@@ -110,8 +110,9 @@ class TestStep5Integration(unittest.TestCase):
         )
         core.track_changed.emit(new_track)
 
-        self.assertEqual(window.title_label.text(), "Die With A Smile")
-        self.assertEqual(window.artist_label.text(), "Lady Gaga & Bruno Mars")
+        self.assertEqual(window.title_label.full_text(), "Die With A Smile")
+        self.assertEqual(window.artist_label.full_text(), "Lady Gaga & Bruno Mars")
+
 
     def test_playback_status_changed_slot_updates_badge(self) -> None:
         """Verify emitting playback_status_changed updates status badge in MainWindow."""
@@ -137,6 +138,31 @@ class TestStep5Integration(unittest.TestCase):
         self.assertIsNotNone(window.progress_slider)
         self.assertIsNotNone(window.lbl_position)
         self.assertIsNotNone(window.lbl_duration)
+
+    def test_elided_label_behavior(self) -> None:
+        """Verify ElidedLabel preserves full_text, elides display text when width is constrained, and sets tooltips."""
+        from src.ui.components import ElidedLabel
+        lbl = ElidedLabel("Very Long Track Title That Will Exceed Available Width")
+        self.assertEqual(lbl.full_text(), "Very Long Track Title That Will Exceed Available Width")
+
+        lbl.setFixedWidth(50)
+        lbl._update_elided_text()
+        self.assertNotEqual(lbl.text(), "Very Long Track Title That Will Exceed Available Width")
+        self.assertTrue(lbl.text().endswith("…") or "…" in lbl.text() or "..." in lbl.text())
+        self.assertEqual(lbl.toolTip(), "Very Long Track Title That Will Exceed Available Width")
+
+    def test_status_badge_pill_styling(self) -> None:
+        """Verify status badge stylesheet contains background and text color styling for PLAYING/PAUSED/STOPPED."""
+        provider = DummyProvider()
+        core = MediaCore(provider=provider)
+        window = MainWindow(media_core=core)
+
+        core.playback_status_changed.emit(PlaybackStatus.PLAYING)
+        self.assertIn("#A6E3A1", window.status_label.styleSheet())
+
+        core.playback_status_changed.emit(PlaybackStatus.PAUSED)
+        self.assertIn("#F9E2AF", window.status_label.styleSheet())
+
 
     def test_button_clicks_call_mediacore_methods(self) -> None:
         """Verify button clicks trigger previous_track, toggle_play_pause, and next_track on MediaCore."""
