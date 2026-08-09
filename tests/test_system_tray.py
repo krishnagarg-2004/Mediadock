@@ -111,17 +111,22 @@ class TestSystemTrayIcon(unittest.TestCase):
         mock_exit.assert_called_once()
 
     def test_tray_activation_signals(self) -> None:
-        """Verify left click (Trigger) and DoubleClick emit show_hide_requested."""
+        """Verify left click (Trigger) emits show_hide_requested and DoubleClick emits show_requested."""
         tray = SystemTrayIcon()
         mock_show_hide = MagicMock()
+        mock_show = MagicMock()
         tray.show_hide_requested.connect(mock_show_hide)
+        tray.show_requested.connect(mock_show)
 
         tray._on_tray_activated(QSystemTrayIcon.ActivationReason.Trigger)
         mock_show_hide.assert_called_once()
+        mock_show.assert_not_called()
 
         mock_show_hide.reset_mock()
         tray._on_tray_activated(QSystemTrayIcon.ActivationReason.DoubleClick)
-        mock_show_hide.assert_called_once()
+        mock_show_hide.assert_not_called()
+        mock_show.assert_called_once()
+
 
     def test_tooltip_formatting_scenarios(self) -> None:
         """Verify tooltip formats playing media, paused media, and closed media correctly."""

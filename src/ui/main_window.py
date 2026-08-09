@@ -1,10 +1,11 @@
 """Main application widget window for MediaDock."""
 
 import time
-from typing import Optional
+from typing import Any, Optional
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QAbstractAnimation
 from PySide6.QtGui import QKeyEvent, QColor, QFont, QPixmap, QPainter, QCloseEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QWidget,
     QHBoxLayout,
     QVBoxLayout,
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from src.core.models import TrackInfo, PlaybackStatus
 from src.core.media_core import MediaCore
+from src.core.settings import SettingsManager
 from src.ui.frameless_window import FramelessWindow
 from src.ui.components import ElidedLabel
 from src.ui.theme import (
@@ -43,6 +45,7 @@ class MainWindow(FramelessWindow):
     def __init__(
         self,
         media_core: Optional[MediaCore] = None,
+        settings_manager: Optional[SettingsManager] = None,
         parent: Optional[QWidget] = None,
         border_radius: float = 16.0,
         bg_color: QColor = QColor("#1E1E2E"),
@@ -52,6 +55,7 @@ class MainWindow(FramelessWindow):
         self.resize(360, 140)
 
         self._media_core = media_core
+        self._settings_manager = settings_manager or SettingsManager()
         self._default_art_pixmap = self._create_default_art_pixmap()
 
         # State tracking for UI clock interpolation & seeking state machine
@@ -72,6 +76,11 @@ class MainWindow(FramelessWindow):
         self._fade_anim.finished.connect(self._on_fade_anim_finished)
 
         self._init_ui()
+
+        # Apply settings configuration
+        self._apply_always_on_top(self._settings_manager.get_always_on_top())
+        self._restore_position()
+        self._settings_manager.settings_changed.connect(self._on_setting_changed)
 
         # Setup UI position interpolation QTimer (250 ms)
         self._position_timer = QTimer(self)
@@ -107,6 +116,32 @@ class MainWindow(FramelessWindow):
         self._fade_anim.setEndValue(1.0)
         self._fade_anim.start()
 
+    def _apply_always_on_top(self, on_top: bool) -> None:
+        """Apply or remove WindowStaysOnTopHint window flag."""
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, on_top)
+        if self.isVisible():
+            self.show()
+
+    def _restore_position(self) -> None:
+        """Restore window position from SettingsManager if remember_position is enabled."""
+        if self._settings_manager and self._settings_manager.get_remember_position():
+            x, y = self._settings_manager.get_window_position()
+            if x >= 0 and y >= 0:
+                self.move(x, y)
+
+    def _save_position(self) -> None:
+        """Save current window position to SettingsManager if remember_position is enabled."""
+        if self._settings_manager and self._settings_manager.get_remember_position():
+            pos = self.pos()
+            if pos.x() >= 0 and pos.y() >= 0:
+                self._settings_manager.set_window_position(pos.x(), pos.y())
+
+    def _on_setting_changed(self, key: str, value: Any) -> None:
+        """Handle settings_changed signal from SettingsManager."""
+        if key == "window/always_on_top":
+            self._apply_always_on_top(bool(value))
+        elif key == "window/remember_position" and value:
+            self._save_position()
 
     def _init_ui(self) -> None:
         """Initialize the widget layout, metadata labels, transport buttons, and progress slider."""
@@ -366,10 +401,10 @@ class MainWindow(FramelessWindow):
                 return
         self.art_label.setPixmap(self._default_art_pixmap)
 
-    # --- Event Filters ---
+    # --- Event Filters & Lifecycle ---
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        """Close window on Escape key press."""
+        """Handle key press events. Closes (or hides) window on Escape key press."""
         if event.key() == Qt.Key.Key_Escape:
             self.close()
             event.accept()
@@ -377,13 +412,19 @@ class MainWindow(FramelessWindow):
             super().keyPressEvent(event)
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        """Clean up position timer, animation effects & MediaCore upon window close."""
+        """Handle window close event based on close_to_tray preference."""
         if self._fade_anim.state() == QAbstractAnimation.State.Running:
             self._fade_anim.stop()
         self._opacity_effect.setOpacity(1.0)
 
         if self._position_timer.isActive():
             self._position_timer.stop()
-        if self._media_core:
-            self._media_core.stop()
-        super().closeEvent(event)
+
+        self._save_position()
+
+        if self._settings_manager and self._settings_manager.get_close_to_tray():
+            event.ignore()
+            self.hide()
+        else:
+            event.accept()
+            QApplication.quit()

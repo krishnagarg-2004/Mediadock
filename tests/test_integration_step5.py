@@ -177,6 +177,75 @@ class TestStep5Integration(unittest.TestCase):
         self.assertIn("#6C7086", window.status_label.styleSheet())
         self.assertEqual(window.status_label.text(), "UNKNOWN")
 
+    def test_close_to_tray_hides_window_without_stopping_mediacore(self) -> None:
+        """Verify close_to_tray=True hides window without stopping MediaCore or quitting."""
+        from unittest.mock import MagicMock
+        from src.core.settings import SettingsManager
+        from PySide6.QtCore import QSettings
+
+        qs = QSettings("KrishnaOSTest", "MediaDockTest")
+        qs.clear()
+        sm = SettingsManager(qsettings=qs)
+        sm.set_close_to_tray(True)
+
+        mock_core = MagicMock(spec=MediaCore)
+        mock_core.get_current_track.return_value = TrackInfo.empty()
+        mock_core.get_playback_status.return_value = PlaybackStatus.CLOSED
+
+        window = MainWindow(media_core=mock_core, settings_manager=sm)
+        window.show()
+
+        window.close()
+
+        # Window should be hidden and MediaCore should NOT be stopped
+        self.assertFalse(window.isVisible())
+        mock_core.stop.assert_not_called()
+        qs.clear()
+
+    def test_always_on_top_setting_toggles_window_flag(self) -> None:
+        """Verify always_on_top setting toggles WindowStaysOnTopHint window flag."""
+        from src.core.settings import SettingsManager
+        from PySide6.QtCore import QSettings
+
+        qs = QSettings("KrishnaOSTest", "MediaDockTest")
+        qs.clear()
+        sm = SettingsManager(qsettings=qs)
+
+        provider = DummyProvider()
+        core = MediaCore(provider=provider)
+        window = MainWindow(media_core=core, settings_manager=sm)
+
+        sm.set_always_on_top(False)
+        self.assertFalse(bool(window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint))
+
+        sm.set_always_on_top(True)
+        self.assertTrue(bool(window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint))
+        qs.clear()
+
+    def test_remember_position_restoration_and_saving(self) -> None:
+        """Verify remember_position restores valid coordinates and saves position on close."""
+        from src.core.settings import SettingsManager
+        from PySide6.QtCore import QSettings
+
+        qs = QSettings("KrishnaOSTest", "MediaDockTest")
+        qs.clear()
+        sm = SettingsManager(qsettings=qs)
+
+        # 1. Unset position (-1, -1) should not change default geometry position
+        provider = DummyProvider()
+        core = MediaCore(provider=provider)
+        window1 = MainWindow(media_core=core, settings_manager=sm)
+
+        # 2. Set valid position
+        sm.set_window_position(220, 340)
+
+        # 3. New window restores valid saved position
+        window2 = MainWindow(media_core=core, settings_manager=sm)
+        self.assertEqual(window2.pos().x(), 220)
+        self.assertEqual(window2.pos().y(), 340)
+        qs.clear()
+
+
     def test_track_change_opacity_animation(self) -> None:
         """Verify emitting track_changed triggers opacity fade animation and leaves final opacity at 1.0."""
         provider = DummyProvider()

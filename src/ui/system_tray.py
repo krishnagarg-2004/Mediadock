@@ -37,6 +37,7 @@ class SystemTrayIcon(QSystemTrayIcon):
     """System tray icon component with context menu, click activation, and dynamic tooltip."""
 
     show_hide_requested = Signal()
+    show_requested = Signal()
     settings_requested = Signal()
     exit_requested = Signal()
 
@@ -96,12 +97,12 @@ class SystemTrayIcon(QSystemTrayIcon):
         )
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
-        """Handle left click (Trigger) and double click activation."""
-        if (
-            reason == QSystemTrayIcon.ActivationReason.Trigger
-            or reason == QSystemTrayIcon.ActivationReason.DoubleClick
-        ):
+        """Handle left click (Trigger) to toggle and double click to bring window to front."""
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
             self.show_hide_requested.emit()
+        elif reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self.show_requested.emit()
+
 
     def _on_track_changed(self, track: TrackInfo) -> None:
         status = (
