@@ -171,6 +171,74 @@ class TestMediaCore(unittest.TestCase):
         self.assertEqual(len(received_tracks), 1)
         self.assertEqual(received_tracks[0], bg_track)
 
+    def test_control_delegation_and_true_propagation(self) -> None:
+        """Verify MediaCore control methods delegate to provider and return True when provider succeeds."""
+        mock_provider = MagicMock()
+        mock_provider.play.return_value = True
+        mock_provider.pause.return_value = True
+        mock_provider.toggle_play_pause.return_value = True
+        mock_provider.next_track.return_value = True
+        mock_provider.previous_track.return_value = True
+        mock_provider.seek_to_position.return_value = True
+
+        core = MediaCore(provider=mock_provider)
+
+        self.assertTrue(core.play())
+        mock_provider.play.assert_called_once()
+
+        self.assertTrue(core.pause())
+        mock_provider.pause.assert_called_once()
+
+        self.assertTrue(core.toggle_play_pause())
+        mock_provider.toggle_play_pause.assert_called_once()
+
+        self.assertTrue(core.next_track())
+        mock_provider.next_track.assert_called_once()
+
+        self.assertTrue(core.previous_track())
+        mock_provider.previous_track.assert_called_once()
+
+        self.assertTrue(core.seek_to_position(12345))
+        mock_provider.seek_to_position.assert_called_once_with(12345)
+
+    def test_control_delegation_and_false_propagation(self) -> None:
+        """Verify MediaCore control methods return False when provider returns False."""
+        mock_provider = MagicMock()
+        mock_provider.play.return_value = False
+        mock_provider.pause.return_value = False
+        mock_provider.toggle_play_pause.return_value = False
+        mock_provider.next_track.return_value = False
+        mock_provider.previous_track.return_value = False
+        mock_provider.seek_to_position.return_value = False
+
+        core = MediaCore(provider=mock_provider)
+
+        self.assertFalse(core.play())
+        self.assertFalse(core.pause())
+        self.assertFalse(core.toggle_play_pause())
+        self.assertFalse(core.next_track())
+        self.assertFalse(core.previous_track())
+        self.assertFalse(core.seek_to_position(12345))
+
+    def test_seek_to_position_argument_forwarding(self) -> None:
+        """Verify seek_to_position(12345) forwards exact argument unchanged."""
+        mock_provider = MagicMock()
+        mock_provider.seek_to_position.return_value = True
+
+        core = MediaCore(provider=mock_provider)
+        result = core.seek_to_position(12345)
+
+        self.assertTrue(result)
+        mock_provider.seek_to_position.assert_called_once_with(12345)
+
+    def test_control_exception_safety(self) -> None:
+        """Verify MediaCore catches provider exceptions and returns False safely."""
+        mock_provider = MagicMock()
+        mock_provider.play.side_effect = RuntimeError("Provider error")
+
+        core = MediaCore(provider=mock_provider)
+        self.assertFalse(core.play())
+
 
 if __name__ == "__main__":
     unittest.main()

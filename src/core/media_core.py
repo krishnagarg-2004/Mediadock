@@ -65,6 +65,57 @@ class MediaCore(QObject):
             return self._provider.is_session_available()
         return self.get_playback_status() != PlaybackStatus.CLOSED
 
+    # --- Transport Controls ---
+
+    def play(self) -> bool:
+        """Request active media player to resume playback. Returns True if command was scheduled."""
+        try:
+            return self._provider.play()
+        except Exception as e:
+            logger.error("Error delegating play command: %s", e)
+            return False
+
+    def pause(self) -> bool:
+        """Request active media player to pause playback. Returns True if command was scheduled."""
+        try:
+            return self._provider.pause()
+        except Exception as e:
+            logger.error("Error delegating pause command: %s", e)
+            return False
+
+    def toggle_play_pause(self) -> bool:
+        """Request active media player to toggle play/pause state. Returns True if command was scheduled."""
+        try:
+            return self._provider.toggle_play_pause()
+        except Exception as e:
+            logger.error("Error delegating toggle_play_pause command: %s", e)
+            return False
+
+    def next_track(self) -> bool:
+        """Request active media player to skip to the next track. Returns True if command was scheduled."""
+        try:
+            return self._provider.next_track()
+        except Exception as e:
+            logger.error("Error delegating next_track command: %s", e)
+            return False
+
+    def previous_track(self) -> bool:
+        """Request active media player to skip to the previous track. Returns True if command was scheduled."""
+        try:
+            return self._provider.previous_track()
+        except Exception as e:
+            logger.error("Error delegating previous_track command: %s", e)
+            return False
+
+    def seek_to_position(self, position_ms: int) -> bool:
+        """Request active media player to seek to position_ms. Returns True if command was scheduled."""
+        try:
+            return self._provider.seek_to_position(position_ms)
+        except Exception as e:
+            logger.error("Error delegating seek_to_position command: %s", e)
+            return False
+
+
     # --- Internal Callback Handlers (Cross-Thread Signal Emitters) ---
 
     def _on_provider_track_changed(self, track: TrackInfo) -> None:
