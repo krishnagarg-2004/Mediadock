@@ -6,7 +6,7 @@ Welcome to **MediaDock**! This document provides instructions for installing, co
 
 ## 1. Prerequisites & System Requirements
 
-- **Operating System**: Windows 10 or Windows 11 (required for WinRT Global System Media Transport Controls API).
+- **Operating System**: Windows 10 or Windows 11 (required for WinRT Global System Media Transport Controls API and CoreAudio volume control).
 - **Python**: Python 3.14 (or Python 3.10+) when running from source code.
 - **Dependencies**: Listed in [`requirements.txt`](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/requirements.txt):
   - `PySide6>=6.6.0`
@@ -46,73 +46,47 @@ Welcome to **MediaDock**! This document provides instructions for installing, co
 ### 3.1 Floating Dock Window
 - **Playback Controls**:
   - **Play / Pause**: Click the central play/pause toggle button.
-  - **Previous Track**: Click the left arrow button.
-  - **Next Track**: Click the right arrow button.
+  - **Previous Track**: Click the left arrow button (`⏮`).
+  - **Next Track**: Click the right arrow button (`⏭`).
+- **Master Volume & Mute**:
+  - **Volume Slider**: Drag the volume slider to adjust Windows master volume (0–100%).
+  - **Mute Button**: Click the vector speaker button to mute or unmute master audio.
 - **Progress & Seeking**:
-  - Drag the progress slider to scrub to a specific position in the current track. Releasing the mouse executes the seek command via GSMTC.
-- **Dragging**: Click and hold anywhere on the frameless window background to move MediaDock around your desktop screen.
+  - Drag the timeline progress slider to scrub to a specific position in the current track. Releasing the mouse executes the seek command via GSMTC.
+- **Compact View Mode**:
+  - Toggle between Full Mode (360x140 px) and Compact Mode (240x48 px mini widget) by right-clicking the window and selecting **Compact Mode**, checking **Compact Mode View** in Preferences, or using the System Tray menu.
+- **Desktop Edge Snapping**:
+  - Drag MediaDock near any screen edge (within 15 px). MediaDock will automatically snap against the top, bottom, left, or right work-area boundary, respecting the Windows taskbar and multi-monitor setups.
+- **Dragging**: Click and hold anywhere on the frameless window background to move MediaDock across your desktop screens.
 
 ### 3.2 System Tray Operation
 MediaDock runs in the Windows System Tray (notification area at the bottom-right of your screen):
 - **Tray Icon**: Displays a dark badge with a `♪` glyph.
 - **Tooltip**: Hover over the tray icon to view the current track title, artist, and playback state (`"MediaDock - Track by Artist [PLAYING]"`).
+- **Media Source Selection Submenu**: Hover over or click **Media Source** in the tray menu to view all active media sessions (`Spotify`, `Google Chrome`, `VLC`, `Microsoft Edge`) and switch active playback targets.
 - **Left-Click (Trigger)**: Toggles window visibility (Show/Hide).
 - **Double-Click**: Restores and brings MediaDock to the front.
-- **Right-Click Context Menu**:
-  - `Show MediaDock` / `Hide MediaDock`: Toggles window visibility.
-  - `Settings...`: Opens the Preferences configuration dialog.
-  - `Exit MediaDock`: Cleanly stops background listeners and terminates the application.
 
 ---
 
-## 4. Settings & Configuration
+## 4. Preferences & Global Hotkeys
 
-Access the Settings dialog by right-clicking the system tray icon and selecting **Settings...**.
+Access the Preferences dialog by right-clicking the System Tray icon and selecting **Preferences...**:
 
-| Preference Setting | Description | Default |
-|---|---|---|
-| **Close to system tray** | Closing the window hides MediaDock to the system tray instead of exiting. | Enabled (`True`) |
-| **Start hidden in system tray** | Application launches minimized in the system tray without popping up the main window. | Disabled (`False`) |
-| **Always on top** | Keeps the floating dock window pinned on top of other desktop windows. | Enabled (`True`) |
-| **Remember window position** | Saves the last desktop screen position and restores it on next launch. | Enabled (`True`) |
-| **Start with Windows** | Configures Windows Registry (`HKCU\...\Run`) to launch MediaDock automatically on system boot. | Disabled (`False`) |
-
----
-
-## 5. Global Keyboard Shortcuts
-
-MediaDock registers system-wide OS hotkeys using the Win32 API, allowing you to control playback even when MediaDock or media players are unfocused or minimized:
-
-- **`Ctrl + Alt + M`**: Toggle MediaDock window visibility (Show / Hide).
-- **`Ctrl + Alt + Space`**: Toggle Play / Pause on the active system media session.
+- **Close to System Tray**: Hides MediaDock to the system tray when closing the window or pressing Escape.
+- **Start Minimized to Tray**: Launches MediaDock hidden in the system tray on startup.
+- **Start with Windows**: Automatically launches MediaDock when Windows boots.
+- **Always on Top**: Keeps MediaDock floating above other desktop windows.
+- **Remember Window Position**: Saves and restores screen coordinates across restarts.
+- **Compact Mode View**: Displays the minimal 240x48 px widget view.
+- **Global Shortcuts**: Customize OS-wide hotkeys for **Show/Hide** (default: `Ctrl+Alt+M`) and **Play/Pause** (default: `Ctrl+Alt+Space`).
+  - Supported modifiers: `Ctrl`, `Alt`, `Shift`, `Win`.
+  - Supported keys: `A-Z`, `0-9`, `Space`, `Tab`, `Return`, `Escape`, `F1-F24`.
+  - If a shortcut is already in use by another application or missing a modifier, MediaDock displays an error and safely rolls back to your previous working shortcuts.
 
 ---
 
-## 6. Packaging & Standalone Executable
+## 5. Known Limitations & Fallbacks
 
-You can build a standalone executable that runs on Windows without requiring a Python installation:
-
-1. Run the build wrapper script:
-   ```cmd
-   python scripts/build.py
-   ```
-2. The script will clean old build outputs, invoke PyInstaller with [`MediaDock.spec`](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/MediaDock.spec), and produce:
-   ```
-   dist/MediaDock.exe
-   ```
-3. Launch `dist/MediaDock.exe` directly or run with command-line flags:
-   ```cmd
-   dist\MediaDock.exe --minimized
-   ```
-
----
-
-## 7. Troubleshooting & Known Limitations
-
-- **No Media Detected ("No Media Playing")**:
-  - Ensure a GSMTC-compliant media application is actively running (e.g. Spotify desktop, YouTube in Chrome/Edge, VLC, Apple Music).
-  - Web browsers must have media playback actively playing audio for Windows GSMTC to expose the session.
-- **Global Hotkey Conflicts**:
-  - If another application has already registered `Ctrl+Alt+M` or `Ctrl+Alt+Space`, MediaDock will log a warning and continue running without capturing that specific hotkey combination.
-- **Standalone Executable Smoke Testing Note**:
-  - The standalone executable build (`dist/MediaDock.exe`) is programmatically verified for process launch, memory health, and CLI flag handling. Interactive visual desktop smoke tests (such as live tray icon rendering and mouse clicks) are manually verified on a physical Windows monitor screen.
+- **Headless / Virtualized Audio**: In virtual machines or headless environments without physical audio master volume endpoints, CoreAudio volume controls degrade gracefully by hiding the volume slider and mute button while keeping playback fully operational.
+- **Hotkey Conflicts**: If another application registers a global shortcut before MediaDock, MediaDock prevents overwriting and retains your existing shortcut configuration.
