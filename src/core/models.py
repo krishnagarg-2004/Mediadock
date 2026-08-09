@@ -42,3 +42,14 @@ class TrackInfo:
             duration_ms=0,
             position_ms=0,
         )
+
+
+@dataclass(frozen=True)
+class MediaSessionInfo:
+    """Immutable representation of an active media session."""
+
+    session_id: str
+    app_id: str
+    display_name: str
+    is_current: bool = False
+    is_selected: bool = False

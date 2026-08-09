@@ -17,6 +17,7 @@ class MediaCore(QObject):
     track_changed = Signal(TrackInfo)
     playback_status_changed = Signal(PlaybackStatus)
     session_availability_changed = Signal(bool)
+    sessions_changed = Signal(list)
 
     def __init__(
         self,
@@ -34,6 +35,7 @@ class MediaCore(QObject):
         self._provider.set_on_session_availability_changed(
             self._on_provider_session_availability_changed
         )
+        self._provider.set_on_sessions_changed(self._on_provider_sessions_changed)
 
     # --- Public API & Lifecycle ---
 
@@ -64,6 +66,30 @@ class MediaCore(QObject):
         if hasattr(self._provider, "is_session_available"):
             return self._provider.is_session_available()
         return self.get_playback_status() != PlaybackStatus.CLOSED
+
+    def get_available_sessions(self) -> list:
+        """Return list of active MediaSessionInfo objects from provider."""
+        try:
+            return self._provider.get_available_sessions()
+        except Exception as e:
+            logger.error("Error getting available sessions: %s", e)
+            return []
+
+    def select_session(self, session_id: Optional[str]) -> bool:
+        """Select a specific media session by ID. Pass None for automatic OS selection."""
+        try:
+            return self._provider.select_session(session_id)
+        except Exception as e:
+            logger.error("Error selecting session '%s': %s", session_id, e)
+            return False
+
+    def get_selected_session_id(self) -> Optional[str]:
+        """Return ID of currently selected session, or None if automatic OS selection."""
+        try:
+            return self._provider.get_selected_session_id()
+        except Exception as e:
+            logger.error("Error getting selected session ID: %s", e)
+            return None
 
     # --- Transport Controls ---
 
@@ -138,3 +164,10 @@ class MediaCore(QObject):
             self.session_availability_changed.emit(available)
         except Exception as e:
             logger.error("Error emitting session_availability_changed signal: %s", e)
+
+    def _on_provider_sessions_changed(self, sessions: list) -> None:
+        """Handler for provider sessions change callbacks. Emits Qt signal safely."""
+        try:
+            self.sessions_changed.emit(sessions)
+        except Exception as e:
+            logger.error("Error emitting sessions_changed signal: %s", e)

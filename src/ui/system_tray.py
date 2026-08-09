@@ -59,11 +59,13 @@ class SystemTrayIcon(QSystemTrayIcon):
             self._connect_media_core()
 
     def _init_menu(self) -> None:
-        """Create tray context menu with Show/Hide, Settings, and Exit actions."""
+        """Create tray context menu with Show/Hide, Media Source, Settings, and Exit actions."""
         self._menu = QMenu()
 
         self.action_show_hide = QAction("Show MediaDock", self._menu)
         self.action_show_hide.triggered.connect(self.show_hide_requested.emit)
+
+        self.menu_media_source = QMenu("Media Source", self._menu)
 
         self.action_settings = QAction("Settings...", self._menu)
         self.action_settings.triggered.connect(self.settings_requested.emit)
@@ -72,6 +74,7 @@ class SystemTrayIcon(QSystemTrayIcon):
         self.action_exit.triggered.connect(self.exit_requested.emit)
 
         self._menu.addAction(self.action_show_hide)
+        self._menu.addMenu(self.menu_media_source)
         self._menu.addAction(self.action_settings)
         self._menu.addSeparator()
         self._menu.addAction(self.action_exit)
@@ -79,7 +82,7 @@ class SystemTrayIcon(QSystemTrayIcon):
         self.setContextMenu(self._menu)
 
     def _connect_media_core(self) -> None:
-        """Connect MediaCore signals to update tooltip dynamically."""
+        """Connect MediaCore signals to update tooltip and session selection dynamically."""
         if not self._media_core:
             return
 
@@ -88,13 +91,47 @@ class SystemTrayIcon(QSystemTrayIcon):
         self._media_core.session_availability_changed.connect(
             self._on_session_availability_changed
         )
+        self._media_core.sessions_changed.connect(self._on_sessions_changed)
 
-        # Initial tooltip sync
+        # Initial sync
         self._update_tooltip(
             self._media_core.get_current_track(),
             self._media_core.get_playback_status(),
             self._media_core.is_session_available(),
         )
+        self._on_sessions_changed(self._media_core.get_available_sessions())
+
+    def _on_sessions_changed(self, sessions: list) -> None:
+        """Update Media Source context submenu with available sessions."""
+        self.menu_media_source.clear()
+
+        selected_id = (
+            self._media_core.get_selected_session_id() if self._media_core else None
+        )
+
+        # Default automatic selection action
+        auto_action = QAction("Auto (System Default)", self.menu_media_source)
+        auto_action.setCheckable(True)
+        auto_action.setChecked(selected_id is None)
+        auto_action.triggered.connect(
+            lambda: self._media_core.select_session(None) if self._media_core else None
+        )
+        self.menu_media_source.addAction(auto_action)
+
+        if sessions:
+            self.menu_media_source.addSeparator()
+            for info in sessions:
+                action = QAction(info.display_name, self.menu_media_source)
+                action.setCheckable(True)
+                action.setChecked(info.is_selected)
+                session_id = info.session_id
+                action.triggered.connect(
+                    lambda _, s_id=session_id: self._media_core.select_session(s_id)
+                    if self._media_core
+                    else None
+                )
+                self.menu_media_source.addAction(action)
+
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         """Handle left click (Trigger) to toggle and double click to bring window to front."""

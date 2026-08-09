@@ -1,9 +1,10 @@
 """Windows GSMTC (Global System Media Transport Controls) media provider implementation."""
 
+import os
 import asyncio
 import logging
 import threading
-from typing import Optional, Callable, Set
+from typing import Optional, Callable, Set, List
 
 try:
     import winrt.windows.media.control as media_control
@@ -14,8 +15,8 @@ except ImportError:  # pragma: no cover
     media_control = None  # type: ignore[assignment]
     streams = None  # type: ignore[assignment]
 
-from src.core.models import TrackInfo, PlaybackStatus
-from src.media.base_provider import BaseMediaProvider
+from src.core.models import TrackInfo, PlaybackStatus, MediaSessionInfo
+from src.media.base_provider import BaseMediaProvider, SessionsCallback
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +33,12 @@ class GSMTCProvider(BaseMediaProvider):
         on_track_changed: Optional[TrackCallback] = None,
         on_status_changed: Optional[StatusCallback] = None,
         on_session_availability_changed: Optional[SessionAvailabilityCallback] = None,
+        on_sessions_changed: Optional[SessionsCallback] = None,
     ) -> None:
         self._on_track_changed_cb = on_track_changed
         self._on_status_changed_cb = on_status_changed
         self._on_session_availability_changed_cb = on_session_availability_changed
+        self._on_sessions_changed_cb = on_sessions_changed
 
         self._lock = threading.RLock()
         self._is_listening = False
@@ -46,6 +49,8 @@ class GSMTCProvider(BaseMediaProvider):
 
         self._manager = None
         self._current_session = None
+        self._selected_session_id: Optional[str] = None
+        self._available_sessions: List[MediaSessionInfo] = []
 
         self._manager_token = None
         self._sessions_token = None
@@ -55,6 +60,7 @@ class GSMTCProvider(BaseMediaProvider):
         self._current_track: TrackInfo = TrackInfo.empty()
         self._playback_status: PlaybackStatus = PlaybackStatus.CLOSED
         self._is_session_available: bool = False
+
 
     # --- Public BaseMediaProvider Interface ---
 
@@ -273,6 +279,30 @@ class GSMTCProvider(BaseMediaProvider):
         with self._lock:
             self._on_session_availability_changed_cb = callback
 
+    def set_on_sessions_changed(
+        self, callback: Optional[SessionsCallback]
+    ) -> None:
+        with self._lock:
+            self._on_sessions_changed_cb = callback
+
+    def get_available_sessions(self) -> List[MediaSessionInfo]:
+        with self._lock:
+            return list(self._available_sessions)
+
+    def select_session(self, session_id: Optional[str]) -> bool:
+        with self._lock:
+            self._selected_session_id = session_id
+        coro = self._evaluate_current_session()
+        fut = self._run_coroutine_on_loop(coro)
+        if fut is None:
+            coro.close()
+        return True
+
+
+    def get_selected_session_id(self) -> Optional[str]:
+        with self._lock:
+            return self._selected_session_id
+
     # --- Background Loop Management ---
 
     def _run_event_loop(self) -> None:
@@ -358,49 +388,147 @@ class GSMTCProvider(BaseMediaProvider):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
+
+    # --- Session Identity & Helpers ---
+
+    def _get_session_id(self, session) -> str:
+        """Generate a consistent string identifier for a WinRT session instance."""
+        if not session:
+            return ""
+        app_id = getattr(session, "source_app_user_model_id", "") or "Unknown"
+        return f"{app_id}#{id(session)}"
+
+    @staticmethod
+    def _format_display_name(app_id: str) -> str:
+        """Convert raw AppUserModelID to a clean user-facing application name."""
+        if not app_id or app_id == "Unknown":
+            return "Unknown Media Player"
+        lower = app_id.lower()
+        if "spotify" in lower:
+            return "Spotify"
+        elif "chrome" in lower:
+            return "Google Chrome"
+        elif "edge" in lower or "msedge" in lower:
+            return "Microsoft Edge"
+        elif "vlc" in lower:
+            return "VLC Media Player"
+        elif "firefox" in lower:
+            return "Mozilla Firefox"
+        elif "apple" in lower and "music" in lower:
+            return "Apple Music"
+        elif "wmplayer" in lower or "mediaplayer" in lower:
+            return "Windows Media Player"
+
+        clean = os.path.basename(app_id)
+        if clean.lower().endswith(".exe"):
+            clean = clean[:-4]
+        return clean.capitalize() if clean else app_id
+
     # --- Session Evaluation & Event Binding ---
 
     async def _evaluate_current_session(self) -> None:
-        """Query get_current_session() and bind to the active media session."""
+        """Query get_sessions() and bind to target or OS-current media session."""
         with self._lock:
             if not self._is_listening or not self._manager:
                 return
 
         try:
-            new_session = self._manager.get_current_session()
+            raw_sessions = self._manager.get_sessions()
+        except Exception as e:
+            logger.warning("Error getting session list: %s", e)
+            raw_sessions = []
+
+        try:
+            os_current_session = self._manager.get_current_session()
         except Exception as e:
             logger.warning("Error getting current session: %s", e)
-            new_session = None
+            os_current_session = None
+
+        with self._lock:
+            target_session_id = self._selected_session_id
+
+        target_session = None
+        if target_session_id and raw_sessions:
+            for s in raw_sessions:
+                if self._get_session_id(s) == target_session_id or getattr(s, "source_app_user_model_id", None) == target_session_id:
+                    target_session = s
+                    break
+            if target_session is None:
+                logger.info("Selected session '%s' closed/disappeared. Falling back to OS current session.", target_session_id)
+                with self._lock:
+                    self._selected_session_id = None
+                target_session = os_current_session
+        else:
+            target_session = os_current_session
+
+        self._update_available_sessions(raw_sessions, os_current_session, target_session)
 
         with self._lock:
             old_session = self._current_session
 
-        if self._is_same_session(old_session, new_session):
+        if self._is_same_session(old_session, target_session):
             return
 
         self._unbind_current_session()
 
-        if new_session is None:
+        if target_session is None:
             self._update_session_availability(False)
             self._update_track_info(TrackInfo.empty())
             self._update_playback_status(PlaybackStatus.CLOSED)
             return
 
         with self._lock:
-            self._current_session = new_session
+            self._current_session = target_session
 
         try:
-            self._props_token = new_session.add_media_properties_changed(
+            self._props_token = target_session.add_media_properties_changed(
                 self._on_media_properties_changed_winrt
             )
-            self._playback_token = new_session.add_playback_info_changed(
+            self._playback_token = target_session.add_playback_info_changed(
                 self._on_playback_info_changed_winrt
             )
         except Exception as e:
             logger.warning("Error adding session event listeners: %s", e)
 
         self._update_session_availability(True)
-        await self._fetch_session_data(new_session)
+        await self._fetch_session_data(target_session)
+
+    def _update_available_sessions(self, raw_sessions, os_current_session, selected_session) -> None:
+        """Build and emit MediaSessionInfo list for all active WinRT sessions."""
+        session_info_list: List[MediaSessionInfo] = []
+        current_id = self._get_session_id(os_current_session)
+        selected_id = self._get_session_id(selected_session)
+
+        if raw_sessions:
+            for s in raw_sessions:
+                s_id = self._get_session_id(s)
+                app_id = getattr(s, "source_app_user_model_id", "") or "Unknown"
+                disp_name = self._format_display_name(app_id)
+                is_curr = (s_id == current_id) or (os_current_session is not None and self._is_same_session(s, os_current_session))
+                is_sel = (s_id == selected_id) or (selected_session is not None and self._is_same_session(s, selected_session))
+
+                session_info_list.append(
+                    MediaSessionInfo(
+                        session_id=s_id,
+                        app_id=app_id,
+                        display_name=disp_name,
+                        is_current=is_curr,
+                        is_selected=is_sel,
+                    )
+                )
+
+        with self._lock:
+            if self._available_sessions == session_info_list:
+                return
+            self._available_sessions = session_info_list
+            callback = self._on_sessions_changed_cb
+
+        if callback:
+            try:
+                callback(session_info_list)
+            except Exception as e:
+                logger.error("Error in on_sessions_changed callback: %s", e)
+
 
     def _unbind_current_session(self) -> None:
         """Unregister event tokens from current session."""

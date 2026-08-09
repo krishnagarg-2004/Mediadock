@@ -1,12 +1,13 @@
 """Abstract base class for media detection providers."""
 
 from abc import ABC, abstractmethod
-from typing import Optional, Callable
-from src.core.models import TrackInfo, PlaybackStatus
+from typing import Optional, Callable, List
+from src.core.models import TrackInfo, PlaybackStatus, MediaSessionInfo
 
 TrackCallback = Callable[[TrackInfo], None]
 StatusCallback = Callable[[PlaybackStatus], None]
 SessionAvailabilityCallback = Callable[[bool], None]
+SessionsCallback = Callable[[List[MediaSessionInfo]], None]
 
 
 class BaseMediaProvider(ABC):
@@ -48,6 +49,25 @@ class BaseMediaProvider(ABC):
     ) -> None:
         """Register callback for session availability change events."""
         pass
+
+    def set_on_sessions_changed(
+        self, callback: Optional[SessionsCallback]
+    ) -> None:
+        """Register callback for session list change events."""
+        pass
+
+    def get_available_sessions(self) -> List[MediaSessionInfo]:
+        """Return list of active media sessions."""
+        return []
+
+    def select_session(self, session_id: Optional[str]) -> bool:
+        """Select a specific media session by ID. Pass None for automatic OS selection."""
+        return False
+
+    def get_selected_session_id(self) -> Optional[str]:
+        """Return ID of currently selected session, or None if automatic OS selection."""
+        return None
+
 
     # --- Transport Control Interface ---
 
