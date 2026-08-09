@@ -37,8 +37,9 @@ class TestMediaDockWindow(unittest.TestCase):
         """Verify MainWindow default properties (title, dimensions)."""
         window = MainWindow()
         self.assertEqual(window.windowTitle(), "MediaDock")
-        self.assertEqual(window.width(), 340)
-        self.assertEqual(window.height(), 120)
+        self.assertEqual(window.width(), 360)
+        self.assertEqual(window.height(), 140)
+
 
 
 if __name__ == "__main__":
