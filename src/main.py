@@ -8,6 +8,7 @@ from src.media.gsmtc_provider import GSMTCProvider
 from src.core.media_core import MediaCore
 from src.ui.main_window import MainWindow
 from src.ui.system_tray import SystemTrayIcon
+from src.ui.settings_dialog import SettingsDialog
 
 
 def main() -> int:
@@ -26,6 +27,17 @@ def main() -> int:
     window = MainWindow(media_core=media_core, settings_manager=settings_manager)
     tray_icon = SystemTrayIcon(media_core=media_core)
     tray_icon.show()
+
+    # Settings dialog single-instance reference
+    settings_dialog: Optional[SettingsDialog] = None
+
+    def open_settings_dialog() -> None:
+        nonlocal settings_dialog
+        if settings_dialog is None or not settings_dialog.isVisible():
+            settings_dialog = SettingsDialog(settings_manager=settings_manager, parent=window)
+            settings_dialog.show()
+        settings_dialog.raise_()
+        settings_dialog.activateWindow()
 
     # Connect system tray interaction signals
     def toggle_window_visibility() -> None:
@@ -46,7 +58,9 @@ def main() -> int:
 
     tray_icon.show_hide_requested.connect(toggle_window_visibility)
     tray_icon.show_requested.connect(show_and_front_window)
+    tray_icon.settings_requested.connect(open_settings_dialog)
     tray_icon.exit_requested.connect(app.quit)
+
 
     # Start media detection
     media_core.start()
