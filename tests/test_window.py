@@ -40,6 +40,15 @@ class TestMediaDockWindow(unittest.TestCase):
         self.assertEqual(window.width(), 360)
         self.assertEqual(window.height(), 140)
 
+    def test_artwork_label_dimensions(self) -> None:
+        """Verify art_label fixed dimensions (72x72) and default pixmap match."""
+        window = MainWindow()
+        self.assertEqual(window.art_label.width(), 72)
+        self.assertEqual(window.art_label.height(), 72)
+        self.assertEqual(window._default_art_pixmap.width(), 72)
+        self.assertEqual(window._default_art_pixmap.height(), 72)
+
+
 
 
 if __name__ == "__main__":

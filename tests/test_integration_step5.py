@@ -193,6 +193,24 @@ class TestStep5Integration(unittest.TestCase):
 
         self.assertEqual(window._opacity_effect.opacity(), 1.0)
 
+    def test_rapid_track_change_animations(self) -> None:
+        """Verify rapid repeated track_changed emissions do not crash or leave broken opacity state."""
+        provider = DummyProvider()
+        core = MediaCore(provider=provider)
+        window = MainWindow(media_core=core)
+
+        for i in range(10):
+            track = TrackInfo(title=f"Rapid Song {i}", artist=f"Rapid Artist {i}")
+            core.track_changed.emit(track)
+
+        if window._fade_anim.state() == window._fade_anim.State.Running:
+            window._fade_anim.stop()
+        window._opacity_effect.setOpacity(1.0)
+
+        self.assertEqual(window.title_label.full_text(), "Rapid Song 9")
+        self.assertEqual(window._opacity_effect.opacity(), 1.0)
+
+
     def test_album_art_accent_extraction_and_fallback(self) -> None:
         """Verify track without art uses fallback accent #89B4FA, and track with valid art extracts accent."""
         from PySide6.QtCore import QBuffer, QByteArray, QIODevice
