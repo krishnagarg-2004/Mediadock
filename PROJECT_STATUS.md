@@ -1,10 +1,10 @@
 # Project Status
 
 Current Milestone:
-Milestone 5 — System Tray & Settings (Completed)
+Milestone 6 — Advanced Features, OS Integration & Packaging (In Review)
 
 Current Task:
-Ready for Milestone 6 — Advanced Features & OS Integration
+Milestone 6 / Step 4: Architecture Manual & End-User Documentation (In Review)
 
 Completed:
 - Project Bible created
@@ -13,14 +13,14 @@ Completed:
 - Milestone 2 Windows Media Detection completed (`BaseMediaProvider`, `GSMTCProvider`, `MediaCore`, PyWinRT session listening, metadata extraction)
 - Milestone 3 Connected UI & Advanced Controls completed (Transport control abstraction, GSMTC async dispatches, MediaCore routing, interactive controls, seeking state machine)
 - Milestone 4 Visual Polish & Dynamic Styling completed (Catppuccin Mocha tokens, QSS styling, `ElidedLabel`, status badges, opacity animations, album-art color extraction)
-- Milestone 5 / Step 1: `SettingsManager` infrastructure wrapped around Qt-native `QSettings` (`KrishnaOS`/`MediaDock`) implemented in [src/core/settings.py](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/src/core/settings.py)
-- Milestone 5 / Step 2: `SystemTrayIcon` with vector icon, context menu (`Show/Hide`, `Settings...`, `Exit`), activation handlers, and dynamic tooltip implemented in [src/ui/system_tray.py](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/src/ui/system_tray.py)
-- Milestone 5 / Step 3: Application lifecycle refactoring (`app.setQuitOnLastWindowClosed(False)`), `close_to_tray`, `start_hidden`, `always_on_top`, and `remember_position` integrated in [src/ui/main_window.py](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/src/ui/main_window.py) & [src/main.py](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/src/main.py)
-- Milestone 5 / Step 4: `SettingsDialog` preference dialog UI built in [src/ui/settings_dialog.py](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/src/ui/settings_dialog.py) with full test coverage in [tests/test_settings_dialog.py](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/tests/test_settings_dialog.py)
-- Milestone 5 / Step 5: End-to-end integration & offscreen runtime verification completed (85 unit & integration tests passing)
+- Milestone 5 System Tray & Settings completed (`SettingsManager`, `SystemTrayIcon`, `SettingsDialog`, lifecycle integration)
+- Milestone 6 / Step 1: Windows Autostart Integration (`AutostartManager`, `winreg` HKCU registry key creation/deletion, startup command formatting)
+- Milestone 6 / Step 2: Global Keyboard Shortcuts (`GlobalHotkeyManager`, `HotkeyNativeEventFilter`, Win32 `WM_HOTKEY` registration for `Ctrl+Alt+M` and `Ctrl+Alt+Space`)
+- Milestone 6 / Step 3: Standalone PyInstaller Packaging Spec & Build System (`MediaDock.spec`, `scripts/build.py`, producing `dist/MediaDock.exe`)
+- Milestone 6 / Step 4: Technical Architecture Manual (`docs/architecture.md`), User & Operation Guide (`docs/user_guide.md`), and updated `README.md`
 
 Next:
-- Begin Milestone 6 — Advanced Features & OS Integration
+- Milestone 6 Final Sign-off
 
 Known Issues:
 None
