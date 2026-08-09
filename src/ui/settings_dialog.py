@@ -38,7 +38,7 @@ class SettingsDialog(QDialog):
         self._settings_manager = settings_manager
 
         self.setWindowTitle("MediaDock Preferences")
-        self.setFixedSize(360, 320)
+        self.setFixedSize(360, 370)
         self.setWindowFlags(
             Qt.WindowType.Dialog
             | Qt.WindowType.WindowTitleHint
@@ -61,7 +61,7 @@ class SettingsDialog(QDialog):
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(20, 18, 20, 18)
-        root_layout.setSpacing(14)
+        root_layout.setSpacing(10)
 
         # Title Header
         title_label = QLabel("Preferences", self)
@@ -94,7 +94,16 @@ class SettingsDialog(QDialog):
             f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;"
         )
 
-        # Checkbox 3: Always on Top
+        # Checkbox 3: Start with Windows
+        self.chk_autostart_windows = QCheckBox("Start with Windows", self)
+        self.lbl_autostart_windows_desc = QLabel(
+            "Automatically launch MediaDock when Windows starts", self
+        )
+        self.lbl_autostart_windows_desc.setStyleSheet(
+            f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;"
+        )
+
+        # Checkbox 4: Always on Top
         self.chk_always_on_top = QCheckBox("Always on Top", self)
         self.lbl_always_on_top_desc = QLabel(
             "Keep widget floating above other windows", self
@@ -103,7 +112,7 @@ class SettingsDialog(QDialog):
             f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;"
         )
 
-        # Checkbox 4: Remember Position
+        # Checkbox 5: Remember Position
         self.chk_remember_position = QCheckBox("Remember Window Position", self)
         self.lbl_remember_position_desc = QLabel(
             "Save and restore screen coordinates", self
@@ -117,6 +126,9 @@ class SettingsDialog(QDialog):
 
         root_layout.addWidget(self.chk_start_hidden)
         root_layout.addWidget(self.lbl_start_hidden_desc)
+
+        root_layout.addWidget(self.chk_autostart_windows)
+        root_layout.addWidget(self.lbl_autostart_windows_desc)
 
         root_layout.addWidget(self.chk_always_on_top)
         root_layout.addWidget(self.lbl_always_on_top_desc)
@@ -153,6 +165,9 @@ class SettingsDialog(QDialog):
         """Load current preference values from SettingsManager into checkbox states."""
         self.chk_close_to_tray.setChecked(self._settings_manager.get_close_to_tray())
         self.chk_start_hidden.setChecked(self._settings_manager.get_start_hidden())
+        self.chk_autostart_windows.setChecked(
+            self._settings_manager.get_autostart_windows()
+        )
         self.chk_always_on_top.setChecked(self._settings_manager.get_always_on_top())
         self.chk_remember_position.setChecked(
             self._settings_manager.get_remember_position()
@@ -162,6 +177,9 @@ class SettingsDialog(QDialog):
         """Persist current checkbox states to SettingsManager and close dialog."""
         self._settings_manager.set_close_to_tray(self.chk_close_to_tray.isChecked())
         self._settings_manager.set_start_hidden(self.chk_start_hidden.isChecked())
+        self._settings_manager.set_autostart_windows(
+            self.chk_autostart_windows.isChecked()
+        )
         self._settings_manager.set_always_on_top(self.chk_always_on_top.isChecked())
         self._settings_manager.set_remember_position(
             self.chk_remember_position.isChecked()

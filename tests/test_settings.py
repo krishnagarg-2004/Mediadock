@@ -20,14 +20,23 @@ class TestSettingsManager(unittest.TestCase):
             cls.app = QApplication(sys.argv)
 
     def setUp(self) -> None:
-        """Create an isolated QSettings store for each test and clear stored keys."""
-        self.test_qs = QSettings("KrishnaOSTest", "MediaDockTest")
-        self.test_qs.clear()
+        """Create an isolated temporary INI QSettings store for each test."""
+        import tempfile
+        self.tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".ini")
+        self.tmp_file.close()
+        self.test_qs = QSettings(self.tmp_file.name, QSettings.Format.IniFormat)
         self.settings = SettingsManager(qsettings=self.test_qs)
 
     def tearDown(self) -> None:
-        """Clean up isolated QSettings store after each test."""
-        self.test_qs.clear()
+        """Clean up isolated temporary INI file after each test."""
+        import os
+        if hasattr(self, "tmp_file") and os.path.exists(self.tmp_file.name):
+            try:
+                os.unlink(self.tmp_file.name)
+            except OSError:
+                pass
+
+
 
     def test_default_values_and_types(self) -> None:
         """Verify default values and strict type casting for un-set keys."""
@@ -72,12 +81,13 @@ class TestSettingsManager(unittest.TestCase):
         self.settings.set_window_position(120, 240)
 
         # Create second manager with same QSettings store
-        second_qs = QSettings("KrishnaOSTest", "MediaDockTest")
+        second_qs = QSettings(self.tmp_file.name, QSettings.Format.IniFormat)
         second_mgr = SettingsManager(qsettings=second_qs)
 
         self.assertFalse(second_mgr.get_close_to_tray())
         self.assertTrue(second_mgr.get_start_hidden())
         self.assertEqual(second_mgr.get_window_position(), (120, 240))
+
 
     def test_settings_changed_signal_emission(self) -> None:
         """Verify settings_changed signal is emitted with (key, value) when a setting changes."""

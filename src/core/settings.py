@@ -3,6 +3,8 @@
 from typing import Any, Optional, Tuple
 from PySide6.QtCore import QObject, QSettings, Signal
 
+from src.utils.autostart import AutostartManager
+
 
 def _to_bool(value: Any, default: bool) -> bool:
     """Convert QSettings value to explicit bool, handling string/int conversions safely."""
@@ -36,6 +38,7 @@ class SettingsManager(QObject):
     DEFAULTS = {
         "general/close_to_tray": True,
         "general/start_hidden": False,
+        "general/autostart_windows": False,
         "window/always_on_top": True,
         "window/remember_position": True,
         "window/pos_x": -1,
@@ -70,10 +73,12 @@ class SettingsManager(QObject):
         """Store setting value by key and emit settings_changed signal if value changed."""
         old_val = self.get(key)
         self._settings.setValue(key, value)
+        self._settings.sync()
         new_val = self.get(key)
 
         if old_val != new_val:
             self.settings_changed.emit(key, new_val)
+
 
     # --- Typed Accessors ---
 
@@ -92,6 +97,22 @@ class SettingsManager(QObject):
     def set_start_hidden(self, hidden: bool) -> None:
         """Set whether application starts minimized/hidden in system tray."""
         self.set("general/start_hidden", bool(hidden))
+
+    def get_autostart_windows(self) -> bool:
+        """Return whether autostart with Windows is enabled."""
+        return self.get("general/autostart_windows")
+
+    def set_autostart_windows(self, enabled: bool) -> bool:
+        """Set whether autostart with Windows is enabled and synchronize with Windows Registry."""
+        success = False
+        if enabled:
+            success = AutostartManager.enable_autostart()
+        else:
+            success = AutostartManager.disable_autostart()
+
+        if success:
+            self.set("general/autostart_windows", bool(enabled))
+        return success
 
     def get_always_on_top(self) -> bool:
         """Return whether main window stays always on top of other windows."""

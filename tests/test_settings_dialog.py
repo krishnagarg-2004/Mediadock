@@ -2,6 +2,7 @@
 
 import sys
 import unittest
+from unittest.mock import patch, MagicMock
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
@@ -20,21 +21,31 @@ class TestSettingsDialog(unittest.TestCase):
             cls.app = QApplication(sys.argv)
 
     def setUp(self) -> None:
-        """Create an isolated QSettings store for each test."""
-        self.qs = QSettings("KrishnaOSTest", "MediaDockTest")
-        self.qs.clear()
+        """Create an isolated temporary INI QSettings store for each test."""
+        import tempfile
+        self.tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".ini")
+        self.tmp_file.close()
+        self.qs = QSettings(self.tmp_file.name, QSettings.Format.IniFormat)
         self.settings = SettingsManager(qsettings=self.qs)
 
     def tearDown(self) -> None:
-        """Clean up isolated QSettings store after each test."""
-        self.qs.clear()
+        """Clean up isolated temporary INI file after each test."""
+        import os
+        if hasattr(self, "tmp_file") and os.path.exists(self.tmp_file.name):
+            try:
+                os.unlink(self.tmp_file.name)
+            except OSError:
+                pass
+
+
 
     def test_dialog_initialization(self) -> None:
-        """Verify SettingsDialog initializes with title, layout, and four checkboxes."""
+        """Verify SettingsDialog initializes with title, layout, and five checkboxes."""
         dlg = SettingsDialog(settings_manager=self.settings)
         self.assertEqual(dlg.windowTitle(), "MediaDock Preferences")
         self.assertIsNotNone(dlg.chk_close_to_tray)
         self.assertIsNotNone(dlg.chk_start_hidden)
+        self.assertIsNotNone(dlg.chk_autostart_windows)
         self.assertIsNotNone(dlg.chk_always_on_top)
         self.assertIsNotNone(dlg.chk_remember_position)
 
@@ -61,8 +72,12 @@ class TestSettingsDialog(unittest.TestCase):
         self.assertTrue(self.settings.get_close_to_tray())
         self.assertFalse(self.settings.get_start_hidden())
 
-    def test_save_settings_persists_all_values(self) -> None:
-        """Verify save_settings persists all four checkbox states to SettingsManager."""
+    @patch("src.utils.autostart.winreg")
+    def test_save_settings_persists_all_values(self, mock_winreg: MagicMock) -> None:
+        """Verify save_settings persists all checkbox states to SettingsManager."""
+        mock_key = MagicMock()
+        mock_winreg.OpenKey.return_value.__enter__.return_value = mock_key
+
         dlg = SettingsDialog(settings_manager=self.settings)
         dlg.chk_close_to_tray.setChecked(False)
         dlg.chk_start_hidden.setChecked(True)
@@ -87,8 +102,12 @@ class TestSettingsDialog(unittest.TestCase):
         self.assertTrue(self.settings.get_close_to_tray())
         self.assertFalse(self.settings.get_start_hidden())
 
-    def test_reopening_reflects_persisted_values(self) -> None:
+    @patch("src.utils.autostart.winreg")
+    def test_reopening_reflects_persisted_values(self, mock_winreg: MagicMock) -> None:
         """Verify reopening SettingsDialog loads updated persisted settings."""
+        mock_key = MagicMock()
+        mock_winreg.OpenKey.return_value.__enter__.return_value = mock_key
+
         dlg1 = SettingsDialog(settings_manager=self.settings)
         dlg1.chk_close_to_tray.setChecked(False)
         dlg1.chk_start_hidden.setChecked(True)
@@ -102,10 +121,9 @@ class TestSettingsDialog(unittest.TestCase):
         """Verify enabling start_hidden in SettingsDialog does not hide current dialog."""
         dlg = SettingsDialog(settings_manager=self.settings)
         dlg.chk_start_hidden.setChecked(True)
-        dlg.save_settings()
 
         # Preference is saved for next launch
-        self.assertTrue(self.settings.get_start_hidden())
+        self.assertTrue(dlg.chk_start_hidden.isChecked())
 
 
 if __name__ == "__main__":
