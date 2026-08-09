@@ -43,9 +43,11 @@ class SettingsManager(QObject):
         "window/remember_position": True,
         "window/pos_x": -1,
         "window/pos_y": -1,
+        "window/compact_mode": False,
         "hotkeys/show_hide": "Ctrl+Alt+M",
         "hotkeys/play_pause": "Ctrl+Alt+Space",
     }
+
 
 
     def __init__(
@@ -143,6 +145,15 @@ class SettingsManager(QObject):
         """Save window screen position (x, y) coordinates."""
         self.set("window/pos_x", int(x))
         self.set("window/pos_y", int(y))
+
+    def get_compact_mode(self) -> bool:
+        """Return whether window is currently in compact view mode."""
+        return self.get("window/compact_mode")
+
+    def set_compact_mode(self, enabled: bool) -> None:
+        """Set whether window is in compact view mode."""
+        self.set("window/compact_mode", bool(enabled))
+
 
     def get_hotkey_show_hide(self) -> str:
         """Return global hotkey sequence string for Show/Hide window."""

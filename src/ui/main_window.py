@@ -3,7 +3,7 @@
 import time
 from typing import Any, Optional
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QAbstractAnimation
-from PySide6.QtGui import QKeyEvent, QColor, QFont, QPixmap, QPainter, QCloseEvent, QIcon, QPen, QPainterPath
+from PySide6.QtGui import QKeyEvent, QColor, QFont, QPixmap, QPainter, QCloseEvent, QIcon, QPen, QPainterPath, QAction
 
 from PySide6.QtWidgets import (
     QApplication,
@@ -14,7 +14,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QGraphicsOpacityEffect,
+    QMenu,
 )
+
 
 from src.core.models import TrackInfo, PlaybackStatus, VolumeState
 from src.core.media_core import MediaCore
@@ -101,9 +103,9 @@ class MainWindow(FramelessWindow):
         self._last_position_update_time: float = 0.0
         self._is_seeking: bool = False
         self._is_setting_volume: bool = False
+        self._is_compact_mode: bool = False
         self._current_status: PlaybackStatus = PlaybackStatus.CLOSED
         self._current_accent: QColor = COLOR_ACCENT_BLUE
-
 
         # Setup subtle opacity fade animation effect for track changes
         self._opacity_effect = QGraphicsOpacityEffect(self)
@@ -119,6 +121,7 @@ class MainWindow(FramelessWindow):
         # Apply settings configuration
         self._apply_always_on_top(self._settings_manager.get_always_on_top())
         self._restore_position()
+        self.set_compact_mode(self._settings_manager.get_compact_mode())
         self._settings_manager.settings_changed.connect(self._on_setting_changed)
 
         # Setup UI position interpolation QTimer (250 ms)
@@ -128,6 +131,66 @@ class MainWindow(FramelessWindow):
 
         if self._media_core:
             self._connect_media_core()
+
+    @property
+    def is_compact_mode(self) -> bool:
+        """Return True if MainWindow is currently in compact view mode (240x48)."""
+        return self._is_compact_mode
+
+    def set_compact_mode(self, enabled: bool) -> None:
+        """Switch between Full Mode (360x140 px) and Compact View Mode (240x48 px)."""
+        self._is_compact_mode = enabled
+        if self._settings_manager and self._settings_manager.get_compact_mode() != enabled:
+            self._settings_manager.set_compact_mode(enabled)
+
+        if enabled:
+            # Hide non-compact widgets
+            self.art_label.hide()
+            self.artist_label.hide()
+            self.btn_prev.hide()
+            self.btn_mute.hide()
+            self.slider_volume.hide()
+            self.status_label.hide()
+            self.lbl_position.hide()
+            self.lbl_duration.hide()
+            self.progress_slider.hide()
+
+            # Set compact dimensions (240x48 px)
+            self.setMinimumSize(240, 48)
+            self.setMaximumSize(240, 48)
+            self.resize(240, 48)
+        else:
+            # Reset fixed size constraints first
+            self.setMinimumSize(0, 0)
+            self.setMaximumSize(16777215, 16777215)
+
+            # Show full-mode widgets
+            self.art_label.show()
+            self.artist_label.show()
+            self.btn_prev.show()
+            self.status_label.show()
+            self.lbl_position.show()
+            self.lbl_duration.show()
+            self.progress_slider.show()
+
+            # Restore volume control if supported
+            if self._media_core:
+                vol_state = self._media_core.get_volume_state()
+                if vol_state.is_supported:
+                    self.btn_mute.show()
+                    self.slider_volume.show()
+                else:
+                    self.btn_mute.hide()
+                    self.slider_volume.hide()
+            else:
+                self.btn_mute.show()
+                self.slider_volume.show()
+
+            # Set full dimensions (360x140 px)
+            self.setMinimumSize(360, 140)
+            self.setMaximumSize(360, 140)
+            self.resize(360, 140)
+
 
     def _create_default_art_pixmap(self) -> QPixmap:
         """Generate a clean 72x72 default placeholder pixmap for missing artwork."""
@@ -181,6 +244,10 @@ class MainWindow(FramelessWindow):
             self._apply_always_on_top(bool(value))
         elif key == "window/remember_position" and value:
             self._save_position()
+        elif key == "window/compact_mode":
+            if bool(value) != self._is_compact_mode:
+                self.set_compact_mode(bool(value))
+
 
     def _init_ui(self) -> None:
         """Initialize the widget layout, metadata labels, transport buttons, and progress slider."""
@@ -521,3 +588,17 @@ class MainWindow(FramelessWindow):
         else:
             event.accept()
             QApplication.quit()
+
+    def contextMenuEvent(self, event) -> None:
+        """Show context menu with Compact Mode toggle on right click."""
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background-color: #1E1E2E; color: #CDD6F4; border: 1px solid #45475A; border-radius: 6px; padding: 4px; }\n"
+            "QMenu::item:selected { background-color: #313244; border-radius: 4px; }"
+        )
+        compact_action = QAction("Compact Mode", self)
+        compact_action.setCheckable(True)
+        compact_action.setChecked(self._is_compact_mode)
+        compact_action.triggered.connect(lambda checked: self.set_compact_mode(checked))
+        menu.addAction(compact_action)
+        menu.exec(event.globalPos())

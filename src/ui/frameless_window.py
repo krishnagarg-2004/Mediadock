@@ -2,8 +2,9 @@
 
 from typing import Optional
 from PySide6.QtCore import Qt, QPoint
-from PySide6.QtGui import QMouseEvent, QPaintEvent, QPainter, QPainterPath, QColor
-from PySide6.QtWidgets import QWidget
+from PySide6.QtGui import QMouseEvent, QPaintEvent, QPainter, QPainterPath, QColor, QGuiApplication, QScreen
+
+SNAP_THRESHOLD_PX = 15
 
 
 class FramelessWindow(QWidget):
@@ -31,6 +32,36 @@ class FramelessWindow(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
+    def _apply_edge_snapping(self, raw_pos: QPoint) -> QPoint:
+        """Calculate snapped position against screen availableGeometry within 15px threshold."""
+        win_w = self.width()
+        win_h = self.height()
+        target_center = QPoint(raw_pos.x() + win_w // 2, raw_pos.y() + win_h // 2)
+
+        screen = QGuiApplication.screenAt(target_center) or QGuiApplication.primaryScreen()
+        if screen is None:
+            return raw_pos
+
+        geom = screen.availableGeometry()
+        snapped_x = raw_pos.x()
+        snapped_y = raw_pos.y()
+
+        # Left edge snap
+        if abs(snapped_x - geom.left()) <= SNAP_THRESHOLD_PX:
+            snapped_x = geom.left()
+        # Right edge snap
+        elif abs((snapped_x + win_w) - geom.right()) <= SNAP_THRESHOLD_PX:
+            snapped_x = geom.right() - win_w
+
+        # Top edge snap
+        if abs(snapped_y - geom.top()) <= SNAP_THRESHOLD_PX:
+            snapped_y = geom.top()
+        # Bottom edge snap
+        elif abs((snapped_y + win_h) - geom.bottom()) <= SNAP_THRESHOLD_PX:
+            snapped_y = geom.bottom() - win_h
+
+        return QPoint(snapped_x, snapped_y)
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
         """Record the drag start position when left mouse button is pressed."""
         if event.button() == Qt.MouseButton.LeftButton:
@@ -40,12 +71,15 @@ class FramelessWindow(QWidget):
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        """Move the window based on mouse drag delta."""
+        """Move the window based on mouse drag delta with desktop edge snapping."""
         if event.buttons() == Qt.MouseButton.LeftButton and self._drag_pos is not None:
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            raw_pos = event.globalPosition().toPoint() - self._drag_pos
+            snapped_pos = self._apply_edge_snapping(raw_pos)
+            self.move(snapped_pos)
             event.accept()
         else:
             super().mouseMoveEvent(event)
+
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         """Reset drag tracking on left mouse button release."""

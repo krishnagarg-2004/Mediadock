@@ -39,7 +39,7 @@ class SettingsDialog(QDialog):
         self._hotkey_manager = hotkey_manager
 
         self.setWindowTitle("MediaDock Preferences")
-        self.setFixedSize(360, 480)
+        self.setFixedSize(360, 540)
         self.setWindowFlags(
             Qt.WindowType.Dialog
             | Qt.WindowType.WindowTitleHint
@@ -49,6 +49,7 @@ class SettingsDialog(QDialog):
 
         self._init_ui()
         self.load_settings()
+
 
 
     def _init_ui(self) -> None:
@@ -123,6 +124,15 @@ class SettingsDialog(QDialog):
             f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;"
         )
 
+        # Checkbox 6: Compact Mode
+        self.chk_compact_mode = QCheckBox("Compact Mode View", self)
+        self.lbl_compact_mode_desc = QLabel(
+            "Display minimal 240x48 widget view", self
+        )
+        self.lbl_compact_mode_desc.setStyleSheet(
+            f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;"
+        )
+
         root_layout.addWidget(self.chk_close_to_tray)
         root_layout.addWidget(self.lbl_close_to_tray_desc)
 
@@ -137,6 +147,10 @@ class SettingsDialog(QDialog):
 
         root_layout.addWidget(self.chk_remember_position)
         root_layout.addWidget(self.lbl_remember_position_desc)
+
+        root_layout.addWidget(self.chk_compact_mode)
+        root_layout.addWidget(self.lbl_compact_mode_desc)
+
 
         # Hotkeys Section Header
         line_hk = QFrame(self)
@@ -216,6 +230,9 @@ class SettingsDialog(QDialog):
         self.chk_remember_position.setChecked(
             self._settings_manager.get_remember_position()
         )
+        self.chk_compact_mode.setChecked(
+            self._settings_manager.get_compact_mode()
+        )
         self.txt_hotkey_show_hide.setText(self._settings_manager.get_hotkey_show_hide())
         self.txt_hotkey_play_pause.setText(self._settings_manager.get_hotkey_play_pause())
 
@@ -246,5 +263,8 @@ class SettingsDialog(QDialog):
         self._settings_manager.set_always_on_top(self.chk_always_on_top.isChecked())
         self._settings_manager.set_remember_position(
             self.chk_remember_position.isChecked()
+        )
+        self._settings_manager.set_compact_mode(
+            self.chk_compact_mode.isChecked()
         )
         self.accept()
