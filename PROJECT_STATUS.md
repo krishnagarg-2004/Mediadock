@@ -1,22 +1,22 @@
 # Project Status
 
 Current Milestone:
-Milestone 1 — Foundation (Completed)
+Milestone 2 — Windows Media Detection (In Progress - Step 1 Complete)
 
 Current Task:
-Ready for Milestone 2 — Windows Media Detection
+Step 2 — Implement BaseMediaProvider Abstract Class
 
 Completed:
 - Project Bible created
 - Repository initialized
-- Specified & installed dependencies (`PySide6>=6.6.0`)
-- Implemented `FramelessWindow` base class with rounded corners, translucent background, and drag support ([src/ui/frameless_window.py](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/src/ui/frameless_window.py))
-- Implemented `MainWindow` UI widget ([src/ui/main_window.py](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/src/ui/main_window.py))
-- Implemented application entry point ([src/main.py](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/src/main.py))
-- Created & verified automated unit tests ([tests/test_window.py](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/tests/test_window.py))
+- Milestone 1 Foundation completed (`FramelessWindow`, `MainWindow`, PySide6 entry point)
+- Milestone 2 / Step 1: Specified & installed PyWinRT dependencies (`winrt-Windows.Media.Control>=3.0.0`, `winrt-Windows.Storage.Streams>=3.0.0`) in `.venv`
+- Milestone 2 / Step 1: Implemented framework-agnostic domain data models (`TrackInfo`, `PlaybackStatus`) in [src/core/models.py](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/src/core/models.py)
+- Milestone 2 / Step 1: Added & verified unit test suite in [tests/test_models.py](file:///c:/Users/krish/Projects/SpotifyProject_OOC1/tests/test_models.py)
+- Milestone 2 / Step 1: Verified PyWinRT package imports in Python 3.14 environment
 
 Next:
-- Begin Milestone 2 — Windows Media Detection (WinRT / GSMTC)
+- Step 2: Implement `BaseMediaProvider` abstract class (`src/media/base_provider.py`)
 
 Known Issues:
 None
