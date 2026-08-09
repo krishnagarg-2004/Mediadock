@@ -173,6 +173,84 @@ class TestGSMTCProvider(unittest.TestCase):
         self.assertIsNone(provider._thread)
         self.assertIsNone(provider._loop)
 
+    def test_controls_when_not_listening_return_false(self) -> None:
+        """Verify transport controls return False when provider is not listening or has no session."""
+        provider = GSMTCProvider()
+        self.assertFalse(provider.play())
+        self.assertFalse(provider.pause())
+        self.assertFalse(provider.toggle_play_pause())
+        self.assertFalse(provider.next_track())
+        self.assertFalse(provider.previous_track())
+        self.assertFalse(provider.seek_to_position(1000))
+        self.assertFalse(provider.seek_to_position(-500))
+
+    def test_seek_position_validation_and_clamping(self) -> None:
+        """Verify negative seek positions are rejected and positive positions are clamped to duration."""
+        provider = GSMTCProvider()
+        provider._is_listening = True
+        mock_session = MagicMock()
+        mock_session.try_change_playback_position_async = AsyncMock()
+        provider._current_session = mock_session
+        provider._current_track = TrackInfo(title="Song", artist="Artist", duration_ms=180000)
+
+        # Mock event loop
+        loop = asyncio.new_event_loop()
+        provider._loop = loop
+        loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+        loop_thread.start()
+
+        try:
+            # Negative position rejected
+            self.assertFalse(provider.seek_to_position(-100))
+
+            # Normal seek -> 5000 ms = 50,000,000 ticks
+            self.assertTrue(provider.seek_to_position(5000))
+
+            # Clamped seek -> 200,000 ms clamped to 180,000 ms = 1,800,000,000 ticks
+            self.assertTrue(provider.seek_to_position(200000))
+
+            import time
+            time.sleep(0.05)
+
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            loop_thread.join(timeout=2.0)
+            loop.close()
+
+    def test_controls_dispatch_coroutine_with_active_session(self) -> None:
+        """Verify public transport controls schedule WinRT coroutines when session exists."""
+        provider = GSMTCProvider()
+        provider._is_listening = True
+
+        mock_session = MagicMock()
+        mock_session.try_play_async = AsyncMock()
+        mock_session.try_pause_async = AsyncMock()
+        mock_session.try_toggle_play_pause_async = AsyncMock()
+        mock_session.try_skip_next_async = AsyncMock()
+        mock_session.try_skip_previous_async = AsyncMock()
+        mock_session.try_change_playback_position_async = AsyncMock()
+        provider._current_session = mock_session
+
+        loop = asyncio.new_event_loop()
+        provider._loop = loop
+        loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+        loop_thread.start()
+
+        try:
+            self.assertTrue(provider.play())
+            self.assertTrue(provider.pause())
+            self.assertTrue(provider.toggle_play_pause())
+            self.assertTrue(provider.next_track())
+            self.assertTrue(provider.previous_track())
+            self.assertTrue(provider.seek_to_position(10000))
+
+            import time
+            time.sleep(0.05)
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            loop_thread.join(timeout=2.0)
+            loop.close()
+
 
 if __name__ == "__main__":
     unittest.main()

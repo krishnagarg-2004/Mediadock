@@ -142,31 +142,119 @@ class GSMTCProvider(BaseMediaProvider):
         with self._lock:
             return self._is_session_available
 
-    # --- Transport Control Interface Stubs (Full winrt implementation in Step 2) ---
+    # --- Transport Control Interface ---
 
     def play(self) -> bool:
-        """Request active media player to resume playback."""
-        return False
+        """Request active media player to resume playback. Returns True if command was scheduled."""
+        with self._lock:
+            if not self._is_listening or not self._current_session:
+                return False
+            session = self._current_session
+        fut = self._run_coroutine_on_loop(self._async_play(session))
+        return fut is not None
 
     def pause(self) -> bool:
-        """Request active media player to pause playback."""
-        return False
+        """Request active media player to pause playback. Returns True if command was scheduled."""
+        with self._lock:
+            if not self._is_listening or not self._current_session:
+                return False
+            session = self._current_session
+        fut = self._run_coroutine_on_loop(self._async_pause(session))
+        return fut is not None
 
     def toggle_play_pause(self) -> bool:
-        """Toggle between play and pause state."""
-        return False
+        """Toggle between play and pause state using native WinRT API. Returns True if command was scheduled."""
+        with self._lock:
+            if not self._is_listening or not self._current_session:
+                return False
+            session = self._current_session
+        fut = self._run_coroutine_on_loop(self._async_toggle_play_pause(session))
+        return fut is not None
 
     def next_track(self) -> bool:
-        """Request active media player to skip to the next track."""
-        return False
+        """Request active media player to skip to the next track. Returns True if command was scheduled."""
+        with self._lock:
+            if not self._is_listening or not self._current_session:
+                return False
+            session = self._current_session
+        fut = self._run_coroutine_on_loop(self._async_next_track(session))
+        return fut is not None
 
     def previous_track(self) -> bool:
-        """Request active media player to skip to the previous track."""
-        return False
+        """Request active media player to skip to the previous track. Returns True if command was scheduled."""
+        with self._lock:
+            if not self._is_listening or not self._current_session:
+                return False
+            session = self._current_session
+        fut = self._run_coroutine_on_loop(self._async_previous_track(session))
+        return fut is not None
 
     def seek_to_position(self, position_ms: int) -> bool:
-        """Request active media player to seek to a specific position in milliseconds."""
-        return False
+        """Request active media player to seek to position_ms. Returns True if command was scheduled."""
+        if position_ms < 0:
+            return False
+        with self._lock:
+            if not self._is_listening or not self._current_session:
+                return False
+            session = self._current_session
+            duration_ms = self._current_track.duration_ms
+            if duration_ms > 0:
+                position_ms = min(position_ms, duration_ms)
+
+        ticks = position_ms * 10_000
+        fut = self._run_coroutine_on_loop(self._async_seek_to_position(session, ticks))
+        return fut is not None
+
+    # --- Async WinRT Control Coroutines ---
+
+    async def _async_play(self, session) -> None:
+        """Coroutine executing session.try_play_async()."""
+        try:
+            if session:
+                await session.try_play_async()
+        except Exception as e:
+            logger.warning("Error executing try_play_async: %s", e)
+
+    async def _async_pause(self, session) -> None:
+        """Coroutine executing session.try_pause_async()."""
+        try:
+            if session:
+                await session.try_pause_async()
+        except Exception as e:
+            logger.warning("Error executing try_pause_async: %s", e)
+
+    async def _async_toggle_play_pause(self, session) -> None:
+        """Coroutine executing session.try_toggle_play_pause_async()."""
+        try:
+            if session:
+                await session.try_toggle_play_pause_async()
+        except Exception as e:
+            logger.warning("Error executing try_toggle_play_pause_async: %s", e)
+
+    async def _async_next_track(self, session) -> None:
+        """Coroutine executing session.try_skip_next_async()."""
+        try:
+            if session:
+                await session.try_skip_next_async()
+        except Exception as e:
+            logger.warning("Error executing try_skip_next_async: %s", e)
+
+    async def _async_previous_track(self, session) -> None:
+        """Coroutine executing session.try_skip_previous_async()."""
+        try:
+            if session:
+                await session.try_skip_previous_async()
+        except Exception as e:
+            logger.warning("Error executing try_skip_previous_async: %s", e)
+
+    async def _async_seek_to_position(self, session, ticks: int) -> None:
+        """Coroutine executing session.try_change_playback_position_async(ticks)."""
+        try:
+            if session:
+                await session.try_change_playback_position_async(ticks)
+        except Exception as e:
+            logger.warning("Error executing try_change_playback_position_async: %s", e)
+
 
 
     # --- Callback Registration Setters ---
