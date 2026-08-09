@@ -3,7 +3,8 @@
 import time
 from typing import Any, Optional
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QAbstractAnimation
-from PySide6.QtGui import QKeyEvent, QColor, QFont, QPixmap, QPainter, QCloseEvent
+from PySide6.QtGui import QKeyEvent, QColor, QFont, QPixmap, QPainter, QCloseEvent, QIcon, QPen, QPainterPath
+
 from PySide6.QtWidgets import (
     QApplication,
     QWidget,
@@ -15,7 +16,7 @@ from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
 )
 
-from src.core.models import TrackInfo, PlaybackStatus
+from src.core.models import TrackInfo, PlaybackStatus, VolumeState
 from src.core.media_core import MediaCore
 from src.core.settings import SettingsManager
 from src.ui.frameless_window import FramelessWindow
@@ -27,6 +28,42 @@ from src.ui.theme import (
     get_slider_stylesheet,
     get_status_badge_style,
 )
+
+
+def create_volume_icon_pixmap(muted: bool, size: int = 16, color: QColor = QColor("#CDD6F4")) -> QPixmap:
+    """Generate HiDPI vector QPixmap for speaker mute/unmute icon."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    pen = QPen(color, 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+
+    # Draw speaker body
+    body_path = QPainterPath()
+    body_path.moveTo(2, 5)
+    body_path.lineTo(5, 5)
+    body_path.lineTo(8, 2)
+    body_path.lineTo(8, 12)
+    body_path.lineTo(5, 9)
+    body_path.lineTo(2, 9)
+    body_path.closeSubpath()
+
+    painter.fillPath(body_path, color)
+    painter.drawPath(body_path)
+
+    if muted:
+        # Draw X cross line
+        painter.drawLine(10, 4, 14, 10)
+        painter.drawLine(14, 4, 10, 10)
+    else:
+        # Draw sound wave arc
+        painter.drawArc(8, 4, 5, 6, -60 * 16, 120 * 16)
+
+    painter.end()
+    return pixmap
 
 
 def _format_time_ms(ms: int) -> str:
@@ -63,8 +100,10 @@ class MainWindow(FramelessWindow):
         self._last_position_ms: int = 0
         self._last_position_update_time: float = 0.0
         self._is_seeking: bool = False
+        self._is_setting_volume: bool = False
         self._current_status: PlaybackStatus = PlaybackStatus.CLOSED
         self._current_accent: QColor = COLOR_ACCENT_BLUE
+
 
         # Setup subtle opacity fade animation effect for track changes
         self._opacity_effect = QGraphicsOpacityEffect(self)
@@ -208,9 +247,25 @@ class MainWindow(FramelessWindow):
         self.btn_next.setStyleSheet(btn_style)
         self.btn_next.clicked.connect(self._on_btn_next_clicked)
 
+        # Master Volume & Mute Controls
+        self.btn_mute = QPushButton(self)
+        self.btn_mute.setFixedSize(26, 24)
+        self.btn_mute.setStyleSheet(btn_style)
+        self.btn_mute.setIcon(QIcon(create_volume_icon_pixmap(False)))
+        self.btn_mute.clicked.connect(self._on_btn_mute_clicked)
+
+        self.slider_volume = QSlider(Qt.Orientation.Horizontal, self)
+        self.slider_volume.setRange(0, 100)
+        self.slider_volume.setValue(100)
+        self.slider_volume.setFixedWidth(56)
+        self.slider_volume.setStyleSheet(get_slider_stylesheet(self._current_accent))
+        self.slider_volume.valueChanged.connect(self._on_volume_slider_changed)
+
         controls_layout.addWidget(self.btn_prev)
         controls_layout.addWidget(self.btn_play_pause)
         controls_layout.addWidget(self.btn_next)
+        controls_layout.addWidget(self.btn_mute)
+        controls_layout.addWidget(self.slider_volume)
         controls_layout.addWidget(self.status_label)
 
         info_layout.addWidget(self.title_label)
@@ -262,13 +317,16 @@ class MainWindow(FramelessWindow):
         self._media_core.session_availability_changed.connect(
             self.on_session_availability_changed
         )
+        self._media_core.volume_changed.connect(self.on_volume_changed)
 
         # Initial display sync
         self.on_track_changed(self._media_core.get_current_track())
         self.on_status_changed(self._media_core.get_playback_status())
         self.on_session_availability_changed(self._media_core.is_session_available())
+        self.on_volume_changed(self._media_core.get_volume_state())
 
-    # --- Button Click Handlers ---
+
+    # --- Button & Slider Click Handlers ---
 
     def _on_btn_prev_clicked(self) -> None:
         if self._media_core:
@@ -281,6 +339,41 @@ class MainWindow(FramelessWindow):
     def _on_btn_next_clicked(self) -> None:
         if self._media_core:
             self._media_core.next_track()
+
+    def _on_btn_mute_clicked(self) -> None:
+        if self._media_core:
+            self._media_core.toggle_mute()
+
+    def _on_volume_slider_changed(self, value: int) -> None:
+        if self._is_setting_volume:
+            return
+        self._is_setting_volume = True
+        try:
+            if self._media_core:
+                self._media_core.set_volume(value)
+        finally:
+            self._is_setting_volume = False
+
+    def on_volume_changed(self, state: VolumeState) -> None:
+        """Slot for volume_changed signal. Updates slider and mute icon or hides if unsupported."""
+        if not state.is_supported:
+            self.btn_mute.hide()
+            self.slider_volume.hide()
+            return
+
+        self.btn_mute.show()
+        self.slider_volume.show()
+
+        if not self._is_setting_volume:
+            self._is_setting_volume = True
+            try:
+                self.slider_volume.setValue(state.volume_percent)
+            finally:
+                self._is_setting_volume = False
+
+        icon_color = QColor("#A6ADC8") if state.is_muted else QColor("#CDD6F4")
+        self.btn_mute.setIcon(QIcon(create_volume_icon_pixmap(state.is_muted, color=icon_color)))
+
 
     # --- Seeking State Machine ---
 

@@ -53,3 +53,17 @@ class MediaSessionInfo:
     display_name: str
     is_current: bool = False
     is_selected: bool = False
+
+
+@dataclass(frozen=True)
+class VolumeState:
+    """Immutable representation of audio volume and mute state."""
+
+    volume_percent: int
+    is_muted: bool
+    is_supported: bool = True
+
+    @classmethod
+    def unsupported(cls) -> "VolumeState":
+        """Return a fallback VolumeState representing unsupported volume control."""
+        return cls(volume_percent=0, is_muted=False, is_supported=False)

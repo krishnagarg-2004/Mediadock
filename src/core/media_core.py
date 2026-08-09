@@ -5,8 +5,9 @@ from typing import Optional
 
 from PySide6.QtCore import QObject, Signal
 
-from src.core.models import TrackInfo, PlaybackStatus
+from src.core.models import TrackInfo, PlaybackStatus, VolumeState
 from src.media.base_provider import BaseMediaProvider
+from src.media.volume_provider import BaseVolumeProvider, WindowsVolumeProvider
 
 logger = logging.getLogger(__name__)
 
@@ -18,24 +19,30 @@ class MediaCore(QObject):
     playback_status_changed = Signal(PlaybackStatus)
     session_availability_changed = Signal(bool)
     sessions_changed = Signal(list)
+    volume_changed = Signal(VolumeState)
 
     def __init__(
         self,
         provider: BaseMediaProvider,
+        volume_provider: Optional[BaseVolumeProvider] = None,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(parent)
         self._provider = provider
+        self._volume_provider = (
+            volume_provider if volume_provider is not None else WindowsVolumeProvider()
+        )
         self._wire_provider_callbacks()
 
     def _wire_provider_callbacks(self) -> None:
-        """Register internal callback handlers on the underlying provider."""
+        """Register internal callback handlers on the underlying media and volume providers."""
         self._provider.set_on_track_changed(self._on_provider_track_changed)
         self._provider.set_on_status_changed(self._on_provider_status_changed)
         self._provider.set_on_session_availability_changed(
             self._on_provider_session_availability_changed
         )
         self._provider.set_on_sessions_changed(self._on_provider_sessions_changed)
+        self._volume_provider.set_on_volume_changed(self._on_provider_volume_changed)
 
     # --- Public API & Lifecycle ---
 
@@ -43,6 +50,7 @@ class MediaCore(QObject):
         """Start listening for media events on the underlying provider."""
         try:
             self._provider.start_listening()
+            self._volume_provider.start_listening()
         except Exception as e:
             logger.error("Failed to start media provider: %s", e)
 
@@ -50,8 +58,10 @@ class MediaCore(QObject):
         """Stop listening for media events and clean up provider resources."""
         try:
             self._provider.stop_listening()
+            self._volume_provider.stop_listening()
         except Exception as e:
             logger.error("Failed to stop media provider cleanly: %s", e)
+
 
     def get_current_track(self) -> TrackInfo:
         """Return the current TrackInfo object from the provider."""
@@ -91,7 +101,46 @@ class MediaCore(QObject):
             logger.error("Error getting selected session ID: %s", e)
             return None
 
+    # --- Master Volume Controls ---
+
+    def get_volume_state(self) -> VolumeState:
+        """Return current VolumeState from volume provider."""
+        try:
+            return self._volume_provider.get_volume_state()
+        except Exception as e:
+            logger.error("Error getting volume state: %s", e)
+            return VolumeState.unsupported()
+
+    def set_volume(self, percent: int) -> bool:
+        """Set master audio volume percentage (0–100)."""
+        try:
+            return self._volume_provider.set_volume(percent)
+        except Exception as e:
+            logger.error("Error setting volume percentage (%d%%): %s", percent, e)
+            return False
+
+    def set_mute(self, muted: bool) -> bool:
+        """Set master audio mute state."""
+        try:
+            return self._volume_provider.set_mute(muted)
+        except Exception as e:
+            logger.error("Error setting mute state (%s): %s", muted, e)
+            return False
+
+    def toggle_mute(self) -> bool:
+        """Toggle master audio mute state."""
+        try:
+            return self._volume_provider.toggle_mute()
+        except Exception as e:
+            logger.error("Error toggling mute state: %s", e)
+            return False
+
+    def is_volume_supported(self) -> bool:
+        """Return True if system master volume control is supported."""
+        return self.get_volume_state().is_supported
+
     # --- Transport Controls ---
+
 
     def play(self) -> bool:
         """Request active media player to resume playback. Returns True if command was scheduled."""
@@ -171,3 +220,10 @@ class MediaCore(QObject):
             self.sessions_changed.emit(sessions)
         except Exception as e:
             logger.error("Error emitting sessions_changed signal: %s", e)
+
+    def _on_provider_volume_changed(self, state: VolumeState) -> None:
+        """Handler for provider volume change callbacks. Emits Qt signal safely."""
+        try:
+            self.volume_changed.emit(state)
+        except Exception as e:
+            logger.error("Error emitting volume_changed signal: %s", e)
