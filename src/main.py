@@ -76,8 +76,13 @@ def main() -> int:
     app.aboutToQuit.connect(hotkey_manager.stop)
     app.aboutToQuit.connect(media_core.stop)
 
-    # Apply start_hidden setting
-    if settings_manager.get_start_hidden():
+    # Apply start_hidden setting or command-line flags (--minimized / --start-hidden)
+    start_hidden = (
+        "--minimized" in sys.argv
+        or "--start-hidden" in sys.argv
+        or settings_manager.get_start_hidden()
+    )
+    if start_hidden:
         window.hide()
         tray_icon.update_menu_state(False)
     else:
@@ -85,6 +90,7 @@ def main() -> int:
         tray_icon.update_menu_state(True)
 
     return app.exec()
+
 
 
 if __name__ == "__main__":
