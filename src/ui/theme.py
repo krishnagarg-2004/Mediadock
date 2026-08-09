@@ -93,8 +93,13 @@ def get_status_badge_style(status: PlaybackStatus) -> tuple[str, str, str]:
         return (PlaybackStatus.PAUSED.value, "#F9E2AF", "#2E2A1E")
     elif status == PlaybackStatus.STOPPED:
         return (PlaybackStatus.STOPPED.value, "#F38BA8", "#2E1E22")
+    elif status == PlaybackStatus.CLOSED:
+        return (PlaybackStatus.CLOSED.value, "#6C7086", "#181825")
+    elif status == PlaybackStatus.UNKNOWN:
+        return (PlaybackStatus.UNKNOWN.value, "#6C7086", "#181825")
     else:
         return (status.value, "#6C7086", "#181825")
+
 
 
 def get_button_stylesheet() -> str:

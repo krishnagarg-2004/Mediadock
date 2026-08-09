@@ -2,15 +2,25 @@
 
 import time
 from typing import Optional
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QAbstractAnimation
 from PySide6.QtGui import QKeyEvent, QColor, QFont, QPixmap, QPainter, QCloseEvent
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSlider
+from PySide6.QtWidgets import (
+    QWidget,
+    QHBoxLayout,
+    QVBoxLayout,
+    QLabel,
+    QPushButton,
+    QSlider,
+    QGraphicsOpacityEffect,
+)
 
 from src.core.models import TrackInfo, PlaybackStatus
 from src.core.media_core import MediaCore
 from src.ui.frameless_window import FramelessWindow
 from src.ui.components import ElidedLabel
 from src.ui.theme import (
+    COLOR_ACCENT_BLUE,
+    extract_dominant_color,
     get_button_stylesheet,
     get_slider_stylesheet,
     get_status_badge_style,
@@ -50,6 +60,16 @@ class MainWindow(FramelessWindow):
         self._last_position_update_time: float = 0.0
         self._is_seeking: bool = False
         self._current_status: PlaybackStatus = PlaybackStatus.CLOSED
+        self._current_accent: QColor = COLOR_ACCENT_BLUE
+
+        # Setup subtle opacity fade animation effect for track changes
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self._opacity_effect.setOpacity(1.0)
+        self.setGraphicsEffect(self._opacity_effect)
+
+        self._fade_anim = QPropertyAnimation(self._opacity_effect, b"opacity", self)
+        self._fade_anim.setDuration(120)
+        self._fade_anim.finished.connect(self._on_fade_anim_finished)
 
         self._init_ui()
 
@@ -73,6 +93,19 @@ class MainWindow(FramelessWindow):
         painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "♪")
         painter.end()
         return pixmap
+
+    def _on_fade_anim_finished(self) -> None:
+        """Ensure widget opacity is restored to 1.0 upon animation completion."""
+        self._opacity_effect.setOpacity(1.0)
+
+    def _trigger_track_fade_animation(self) -> None:
+        """Trigger a subtle non-blocking opacity cross-fade on track changes, restoring opacity to 1.0."""
+        if self._fade_anim.state() == QAbstractAnimation.State.Running:
+            self._fade_anim.stop()
+        self._opacity_effect.setOpacity(1.0)
+        self._fade_anim.setStartValue(0.7)
+        self._fade_anim.setEndValue(1.0)
+        self._fade_anim.start()
 
 
     def _init_ui(self) -> None:
@@ -170,7 +203,7 @@ class MainWindow(FramelessWindow):
         self.progress_slider = QSlider(Qt.Orientation.Horizontal, self)
         self.progress_slider.setRange(0, 0)
         self.progress_slider.setValue(0)
-        self.progress_slider.setStyleSheet(get_slider_stylesheet())
+        self.progress_slider.setStyleSheet(get_slider_stylesheet(self._current_accent))
 
         # Seeking State Machine Connections
         self.progress_slider.sliderPressed.connect(self._on_slider_pressed)
@@ -251,10 +284,14 @@ class MainWindow(FramelessWindow):
     # --- Qt Signal Slots ---
 
     def on_track_changed(self, track: TrackInfo) -> None:
-        """Slot for track_changed signal. Updates title, artist, art, and timeline."""
+        """Slot for track_changed signal. Updates title, artist, art, accent, and timeline."""
         self.title_label.setText(track.title)
         self.artist_label.setText(track.artist)
         self._update_album_art(track.album_art_bytes)
+
+        # Dynamic album art accent extraction & progress slider tinting
+        self._current_accent = extract_dominant_color(track.album_art_bytes)
+        self.progress_slider.setStyleSheet(get_slider_stylesheet(self._current_accent))
 
         # Timeline state update
         self._duration_ms = max(0, track.duration_ms)
@@ -270,6 +307,9 @@ class MainWindow(FramelessWindow):
         self.lbl_position.setText(_format_time_ms(self._last_position_ms))
         if not self._is_seeking:
             self.progress_slider.setValue(min(self._last_position_ms, self._duration_ms))
+
+        # Trigger smooth opacity transition
+        self._trigger_track_fade_animation()
 
     def on_status_changed(self, status: PlaybackStatus) -> None:
         """Slot for playback_status_changed signal. Updates status badge, play/pause button, and timer."""
@@ -337,7 +377,11 @@ class MainWindow(FramelessWindow):
             super().keyPressEvent(event)
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        """Clean up position timer & MediaCore upon window close."""
+        """Clean up position timer, animation effects & MediaCore upon window close."""
+        if self._fade_anim.state() == QAbstractAnimation.State.Running:
+            self._fade_anim.stop()
+        self._opacity_effect.setOpacity(1.0)
+
         if self._position_timer.isActive():
             self._position_timer.stop()
         if self._media_core:

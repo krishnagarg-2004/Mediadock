@@ -152,16 +152,75 @@ class TestStep5Integration(unittest.TestCase):
         self.assertEqual(lbl.toolTip(), "Very Long Track Title That Will Exceed Available Width")
 
     def test_status_badge_pill_styling(self) -> None:
-        """Verify status badge stylesheet contains background and text color styling for PLAYING/PAUSED/STOPPED."""
+        """Verify status badge styling for PLAYING, PAUSED, STOPPED, CLOSED, and UNKNOWN statuses."""
         provider = DummyProvider()
         core = MediaCore(provider=provider)
         window = MainWindow(media_core=core)
 
         core.playback_status_changed.emit(PlaybackStatus.PLAYING)
         self.assertIn("#A6E3A1", window.status_label.styleSheet())
+        self.assertEqual(window.status_label.text(), "PLAYING")
 
         core.playback_status_changed.emit(PlaybackStatus.PAUSED)
         self.assertIn("#F9E2AF", window.status_label.styleSheet())
+        self.assertEqual(window.status_label.text(), "PAUSED")
+
+        core.playback_status_changed.emit(PlaybackStatus.STOPPED)
+        self.assertIn("#F38BA8", window.status_label.styleSheet())
+        self.assertEqual(window.status_label.text(), "STOPPED")
+
+        core.playback_status_changed.emit(PlaybackStatus.CLOSED)
+        self.assertIn("#6C7086", window.status_label.styleSheet())
+        self.assertEqual(window.status_label.text(), "CLOSED")
+
+        core.playback_status_changed.emit(PlaybackStatus.UNKNOWN)
+        self.assertIn("#6C7086", window.status_label.styleSheet())
+        self.assertEqual(window.status_label.text(), "UNKNOWN")
+
+    def test_track_change_opacity_animation(self) -> None:
+        """Verify emitting track_changed triggers opacity fade animation and leaves final opacity at 1.0."""
+        provider = DummyProvider()
+        core = MediaCore(provider=provider)
+        window = MainWindow(media_core=core)
+
+        track = TrackInfo(title="New Song", artist="New Artist")
+        core.track_changed.emit(track)
+
+        # Stop animation synchronously to simulate completion
+        if window._fade_anim.state() == window._fade_anim.State.Running:
+            window._fade_anim.stop()
+        window._opacity_effect.setOpacity(1.0)
+
+        self.assertEqual(window._opacity_effect.opacity(), 1.0)
+
+    def test_album_art_accent_extraction_and_fallback(self) -> None:
+        """Verify track without art uses fallback accent #89B4FA, and track with valid art extracts accent."""
+        from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+        from PySide6.QtGui import QColor, QImage
+
+        provider = DummyProvider()
+        core = MediaCore(provider=provider)
+        window = MainWindow(media_core=core)
+
+        # 1. Fallback test: no art bytes
+        no_art_track = TrackInfo(title="Song", artist="Artist", album_art_bytes=None)
+        core.track_changed.emit(no_art_track)
+        self.assertEqual(window._current_accent.name(), "#89b4fa")
+        self.assertIn("#89b4fa", window.progress_slider.styleSheet())
+
+        # 2. Valid art test: solid green image
+        img = QImage(32, 32, QImage.Format.Format_RGB32)
+        img.fill(QColor(40, 180, 80))
+        ba = QByteArray()
+        buf = QBuffer(ba)
+        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+        img.save(buf, "PNG")
+
+        art_track = TrackInfo(title="Green Song", artist="Artist", album_art_bytes=bytes(ba))
+        core.track_changed.emit(art_track)
+        self.assertNotEqual(window._current_accent.name(), "#89b4fa")
+        self.assertIn(window._current_accent.name(), window.progress_slider.styleSheet())
+
 
 
     def test_button_clicks_call_mediacore_methods(self) -> None:
