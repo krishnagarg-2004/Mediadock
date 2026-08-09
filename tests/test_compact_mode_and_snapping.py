@@ -138,7 +138,9 @@ class TestCompactModeAndEdgeSnapping(unittest.TestCase):
         """Verify long track titles are elided cleanly in compact mode without crash."""
         self.window.set_compact_mode(True)
         self.window.on_track_changed(self.provider.get_current_track())
-        self.assertIn("A Very Long Song Title", self.window.title_label.text())
+        self.assertTrue(self.window.title_label.text().startswith("A Very Long"))
+        self.assertIn("A Very Long Song Title", self.window.title_label.full_text())
+
 
     # --- 3. Edge Snapping Math Tests ---
 

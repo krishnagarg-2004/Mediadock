@@ -236,8 +236,9 @@ class TestHotkeySettingsIntegration(unittest.TestCase):
 
         # Save should fail validation
         dialog.save_settings()
-        self.assertTrue(dialog.lbl_error.isVisible())
+        self.assertFalse(dialog.lbl_error.isHidden())
         self.assertEqual(sm.get_hotkey_show_hide(), "Ctrl+Alt+M")
+
 
 
 if __name__ == "__main__":

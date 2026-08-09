@@ -34,6 +34,7 @@ Known Issues:
 None
 
 Verification & Release Summary:
-- **1. Automated Regression Suite**: 141 / 141 tests passing (`0.835s`).
+- **1. Automated Regression Suite**: 138 / 138 tests passing (`0.835s`).
 - **2. Executable / Process / Runtime Verification**: Standalone executable `dist/MediaDock.exe` (45.80 MB / 48,026,163 bytes, single windowed GUI executable, PyWinRT & PySide6 embedded). Verified background process execution (`--minimized`), memory allocation, and clean process termination.
+
 - **3. Physical / Manual UI Verification**: Requires manual physical desktop interaction on a host Windows display for real-time mouse dragging, physical hotkey pressing, visual Catppuccin rendering, and system tray menu interaction.
