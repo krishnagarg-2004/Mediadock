@@ -48,7 +48,59 @@ class TestMediaDockWindow(unittest.TestCase):
         self.assertEqual(window._default_art_pixmap.width(), 72)
         self.assertEqual(window._default_art_pixmap.height(), 72)
 
+    def test_close_event_hides_window_when_close_to_tray_enabled(self) -> None:
+        """Verify closeEvent ignores close and calls hide() when close_to_tray setting is True."""
+        from unittest.mock import MagicMock
+        from PySide6.QtGui import QCloseEvent
+        from src.core.settings import SettingsManager
 
+        mock_settings = MagicMock(spec=SettingsManager)
+        mock_settings.get_close_to_tray.return_value = True
+        mock_settings.get_always_on_top.return_value = True
+        mock_settings.get_compact_mode.return_value = False
+        mock_settings.get_window_position.return_value = (100, 100)
+
+        window = MainWindow(settings_manager=mock_settings)
+        window.show()
+
+        event = QCloseEvent()
+        window.closeEvent(event)
+
+        self.assertFalse(event.isAccepted())
+        self.assertFalse(window.isVisible())
+
+    def test_close_event_quits_app_when_close_to_tray_disabled(self) -> None:
+        """Verify closeEvent accepts event and calls QApplication.quit when close_to_tray is False."""
+        from unittest.mock import MagicMock, patch
+        from PySide6.QtGui import QCloseEvent
+        from src.core.settings import SettingsManager
+
+        mock_settings = MagicMock(spec=SettingsManager)
+        mock_settings.get_close_to_tray.return_value = False
+        mock_settings.get_always_on_top.return_value = True
+        mock_settings.get_compact_mode.return_value = False
+        mock_settings.get_window_position.return_value = (100, 100)
+
+        window = MainWindow(settings_manager=mock_settings)
+
+        event = QCloseEvent()
+        with patch.object(QApplication, "quit") as mock_quit:
+            window.closeEvent(event)
+            self.assertTrue(event.isAccepted())
+            mock_quit.assert_called_once()
+
+    def test_toggle_window_visibility_logic(self) -> None:
+        """Verify showing and hiding window toggles isVisible state cleanly."""
+        window = MainWindow()
+
+        window.show()
+        self.assertTrue(window.isVisible())
+
+        window.hide()
+        self.assertFalse(window.isVisible())
+
+        window.show()
+        self.assertTrue(window.isVisible())
 
 
 if __name__ == "__main__":
