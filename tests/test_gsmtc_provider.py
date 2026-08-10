@@ -251,6 +251,121 @@ class TestGSMTCProvider(unittest.TestCase):
             loop_thread.join(timeout=2.0)
             loop.close()
 
+    @patch("src.media.gsmtc_provider.WINRT_AVAILABLE", True)
+    @patch("src.media.gsmtc_provider.media_control")
+    def test_zero_sessions_startup_lifecycle(self, mock_media_control) -> None:
+        """Verify GSMTCProvider starts cleanly when zero media sessions exist at startup."""
+        mock_manager = MagicMock()
+        mock_manager.get_sessions.return_value = []
+        mock_manager.get_current_session.return_value = None
+        mock_media_control.GlobalSystemMediaTransportControlsSessionManager.request_async = AsyncMock(
+            return_value=mock_manager
+        )
+
+        session_cb = MagicMock()
+        provider = GSMTCProvider(on_session_availability_changed=session_cb)
+
+        provider.start_listening()
+        try:
+            self.assertTrue(provider._is_listening)
+            self.assertFalse(provider.is_session_available())
+            self.assertEqual(provider.get_current_track(), TrackInfo.empty())
+            self.assertEqual(provider.get_playback_status(), PlaybackStatus.CLOSED)
+        finally:
+            provider.stop_listening()
+
+    @patch("src.media.gsmtc_provider.WINRT_AVAILABLE", True)
+    @patch("src.media.gsmtc_provider.media_control")
+    def test_no_session_to_session_to_no_session_lifecycle(self, mock_media_control) -> None:
+        """Verify lifecycle transition: zero sessions -> session appears -> session disappears."""
+        mock_manager = MagicMock()
+        mock_manager.get_sessions.return_value = []
+        mock_manager.get_current_session.return_value = None
+        mock_media_control.GlobalSystemMediaTransportControlsSessionManager.request_async = AsyncMock(
+            return_value=mock_manager
+        )
+
+        session_cb = MagicMock()
+        track_cb = MagicMock()
+        status_cb = MagicMock()
+        provider = GSMTCProvider(
+            on_session_availability_changed=session_cb,
+            on_track_changed=track_cb,
+            on_status_changed=status_cb,
+        )
+
+        provider.start_listening()
+        try:
+            self.assertFalse(provider.is_session_available())
+
+            # 1. Session appears (Spotify launched after MediaDock)
+            mock_session = MagicMock()
+            mock_session.source_app_user_model_id = "Spotify.exe"
+            mock_props = MagicMock()
+            mock_props.title = "Song A"
+            mock_props.artist = "Artist A"
+            mock_props.album_title = "Album A"
+            mock_props.thumbnail = None
+            mock_session.try_get_media_properties_async = AsyncMock(return_value=mock_props)
+            mock_session.get_timeline_properties.return_value = None
+            mock_session.get_playback_info.return_value = MagicMock(playback_status="PLAYING")
+
+            mock_manager.get_sessions.return_value = [mock_session]
+            mock_manager.get_current_session.return_value = mock_session
+
+            # Simulate WinRT SessionsChanged event from background thread
+            provider._on_sessions_changed_winrt(None, None)
+
+            import time
+            time.sleep(0.15)  # Allow background loop coroutine execution
+
+            self.assertTrue(provider.is_session_available())
+            session_cb.assert_called_with(True)
+
+            # 2. Session disappears (Spotify closed)
+            mock_manager.get_sessions.return_value = []
+            mock_manager.get_current_session.return_value = None
+
+            provider._on_sessions_changed_winrt(None, None)
+            time.sleep(0.15)
+
+            self.assertFalse(provider.is_session_available())
+            session_cb.assert_called_with(False)
+            self.assertEqual(provider.get_current_track(), TrackInfo.empty())
+            self.assertEqual(provider.get_playback_status(), PlaybackStatus.CLOSED)
+
+        finally:
+            provider.stop_listening()
+
+    def test_schedule_coroutine_cross_thread_safety(self) -> None:
+        """Verify _schedule_coroutine dispatches safely when invoked from an external non-loop thread."""
+        provider = GSMTCProvider()
+        provider._is_listening = True
+
+        loop = asyncio.new_event_loop()
+        provider._loop = loop
+        loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+        loop_thread.start()
+
+        executed = threading.Event()
+
+        async def sample_coro():
+            executed.set()
+
+        try:
+            # Invoke from caller thread (simulating WinRT COM callback thread)
+            external_thread = threading.Thread(
+                target=lambda: provider._schedule_coroutine(sample_coro())
+            )
+            external_thread.start()
+            external_thread.join(timeout=1.0)
+
+            self.assertTrue(executed.wait(timeout=2.0))
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            loop_thread.join(timeout=2.0)
+            loop.close()
+
 
 if __name__ == "__main__":
     unittest.main()

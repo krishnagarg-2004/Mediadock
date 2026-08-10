@@ -789,13 +789,17 @@ class GSMTCProvider(BaseMediaProvider):
             self._fetch_playback_status(session)
 
     def _schedule_coroutine(self, coro) -> None:
-        """Schedule a coroutine on the background event loop and track its task."""
+        """Schedule a coroutine on the background event loop safely across thread boundaries."""
         with self._lock:
             if not self._is_listening or not self._loop or not self._loop.is_running():
                 return
             try:
-                task = self._loop.create_task(coro)
-                self._pending_tasks.add(task)
-                task.add_done_callback(self._pending_tasks.discard)
+                future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+                def _on_done(fut):
+                    try:
+                        fut.result()
+                    except Exception as e:
+                        logger.warning("Error executing scheduled coroutine: %s", e)
+                future.add_done_callback(_on_done)
             except Exception as e:
                 logger.warning("Error scheduling coroutine: %s", e)
