@@ -5,6 +5,7 @@ from typing import Optional
 from PySide6.QtWidgets import QApplication
 
 from src.core.settings import SettingsManager
+from src.core.single_instance import SingleInstanceGuard
 from src.media.gsmtc_provider import GSMTCProvider
 from src.core.media_core import MediaCore
 from src.ui.main_window import MainWindow
@@ -19,6 +20,14 @@ def main() -> int:
     app.setApplicationName("MediaDock")
     app.setOrganizationName("KrishnaOS")
     app.setQuitOnLastWindowClosed(False)
+
+    # Single-instance enforcement: exit secondary launches early
+    single_instance_guard = SingleInstanceGuard()
+    if not single_instance_guard.initialize(sys.argv):
+        return 0
+
+    # Ensure clean release of server lock on exit
+    app.aboutToQuit.connect(single_instance_guard.close)
 
     # Instantiate settings, media infrastructure, application coordinator, and hotkey manager
     settings_manager = SettingsManager()
@@ -53,12 +62,16 @@ def main() -> int:
             tray_icon.update_menu_state(False)
         else:
             window.show()
+            if window.isMinimized():
+                window.showNormal()
             window.raise_()
             window.activateWindow()
             tray_icon.update_menu_state(True)
 
     def show_and_front_window() -> None:
         window.show()
+        if window.isMinimized():
+            window.showNormal()
         window.raise_()
         window.activateWindow()
         tray_icon.update_menu_state(True)
@@ -67,6 +80,9 @@ def main() -> int:
     tray_icon.show_requested.connect(show_and_front_window)
     tray_icon.settings_requested.connect(open_settings_dialog)
     tray_icon.exit_requested.connect(app.quit)
+
+    # Connect single instance activation signal
+    single_instance_guard.activation_requested.connect(show_and_front_window)
 
     # Connect global hotkey signals
     hotkey_manager.show_hide_requested.connect(toggle_window_visibility)
