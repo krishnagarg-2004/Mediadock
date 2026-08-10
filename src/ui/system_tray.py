@@ -37,6 +37,7 @@ class SystemTrayIcon(QSystemTrayIcon):
     """System tray icon component with context menu, click activation, and dynamic tooltip."""
 
     show_hide_requested = Signal()
+    compact_mode_requested = Signal(bool)
     show_requested = Signal()
     settings_requested = Signal()
     exit_requested = Signal()
@@ -59,11 +60,17 @@ class SystemTrayIcon(QSystemTrayIcon):
             self._connect_media_core()
 
     def _init_menu(self) -> None:
-        """Create tray context menu with Show/Hide, Media Source, Settings, and Exit actions."""
+        """Create tray context menu with Show/Hide, Compact Mode, Media Source, Settings, and Exit actions."""
         self._menu = QMenu()
 
         self.action_show_hide = QAction("Show MediaDock", self._menu)
         self.action_show_hide.triggered.connect(self.show_hide_requested.emit)
+
+        self.action_compact_mode = QAction("Compact Mode", self._menu)
+        self.action_compact_mode.setCheckable(True)
+        self.action_compact_mode.triggered.connect(
+            lambda checked: self.compact_mode_requested.emit(checked)
+        )
 
         self.menu_media_source = QMenu("Media Source", self._menu)
 
@@ -74,12 +81,21 @@ class SystemTrayIcon(QSystemTrayIcon):
         self.action_exit.triggered.connect(self.exit_requested.emit)
 
         self._menu.addAction(self.action_show_hide)
+        self._menu.addAction(self.action_compact_mode)
         self._menu.addMenu(self.menu_media_source)
         self._menu.addAction(self.action_settings)
         self._menu.addSeparator()
         self._menu.addAction(self.action_exit)
 
         self.setContextMenu(self._menu)
+
+    def set_compact_mode_checked(self, enabled: bool) -> None:
+        """Update Compact Mode checkable action state to remain synchronized with settings/window."""
+        self.action_compact_mode.setChecked(enabled)
+
+    def hide_tray_icon(self) -> None:
+        """Explicitly hide tray icon to prevent ghost icon artifacts in Windows notification area on shutdown."""
+        self.hide()
 
     def _connect_media_core(self) -> None:
         """Connect MediaCore signals to update tooltip and session selection dynamically."""

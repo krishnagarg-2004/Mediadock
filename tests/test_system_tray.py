@@ -152,6 +152,34 @@ class TestSystemTrayIcon(unittest.TestCase):
         core.session_availability_changed.emit(False)
         self.assertEqual(tray.toolTip(), "MediaDock - No Media Playing")
 
+    def test_compact_mode_action_and_signal(self) -> None:
+        """Verify context menu contains checkable Compact Mode action that emits compact_mode_requested."""
+        tray = SystemTrayIcon()
+        self.assertIsNotNone(tray.action_compact_mode)
+        self.assertTrue(tray.action_compact_mode.isCheckable())
+
+        mock_compact_cb = MagicMock()
+        tray.compact_mode_requested.connect(mock_compact_cb)
+
+        tray.action_compact_mode.trigger()
+        mock_compact_cb.assert_called_once_with(True)
+
+    def test_set_compact_mode_checked(self) -> None:
+        """Verify set_compact_mode_checked updates action check state."""
+        tray = SystemTrayIcon()
+        tray.set_compact_mode_checked(True)
+        self.assertTrue(tray.action_compact_mode.isChecked())
+
+        tray.set_compact_mode_checked(False)
+        self.assertFalse(tray.action_compact_mode.isChecked())
+
+    def test_hide_tray_icon_cleanup(self) -> None:
+        """Verify hide_tray_icon hides the system tray icon."""
+        tray = SystemTrayIcon()
+        tray.show()
+        tray.hide_tray_icon()
+        self.assertFalse(tray.isVisible())
+
 
 if __name__ == "__main__":
     unittest.main()

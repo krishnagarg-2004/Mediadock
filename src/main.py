@@ -77,9 +77,18 @@ def main() -> int:
         tray_icon.update_menu_state(True)
 
     tray_icon.show_hide_requested.connect(toggle_window_visibility)
+    tray_icon.compact_mode_requested.connect(window.set_compact_mode)
     tray_icon.show_requested.connect(show_and_front_window)
     tray_icon.settings_requested.connect(open_settings_dialog)
     tray_icon.exit_requested.connect(app.quit)
+
+    # Sync tray compact mode state with settings manager
+    tray_icon.set_compact_mode_checked(settings_manager.get_compact_mode())
+    settings_manager.settings_changed.connect(
+        lambda key, val: tray_icon.set_compact_mode_checked(bool(val))
+        if key == "window/compact_mode"
+        else None
+    )
 
     # Connect single instance activation signal
     single_instance_guard.activation_requested.connect(show_and_front_window)
@@ -96,9 +105,10 @@ def main() -> int:
     hotkey_manager.start(show_hide_seq=sh_hk, play_pause_seq=pp_hk)
 
 
-    # Ensure clean provider and hotkey shutdown on application exit
+    # Ensure clean provider, hotkey, and tray icon shutdown on application exit
     app.aboutToQuit.connect(hotkey_manager.stop)
     app.aboutToQuit.connect(media_core.stop)
+    app.aboutToQuit.connect(tray_icon.hide_tray_icon)
 
     # Apply start_hidden setting or command-line flags (--minimized / --start-hidden)
     start_hidden = (
