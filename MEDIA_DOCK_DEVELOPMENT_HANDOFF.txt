@@ -1,0 +1,300 @@
+--------------------------------------------------
+MEDIA DOCK — DEVELOPMENT HANDOFF
+--------------------------------------------------
+
+1. PROJECT IDENTITY
+
+- Project Name: MediaDock
+- Target Platform: Windows 10 / 11 (PySide6 / Win32 / WinRT)
+- Application Purpose: Ambient desktop media playback control overlay & system tray utility.
+- Core Product Concept: Top-center anchored Dynamic Island-style media control widget.
+- Architectural Integrations:
+  - GSMTC (Global System Media Transport Controls): Intercepts system media sessions (Spotify, YouTube, VLC, etc.) via WinRT API.
+  - MediaCore: Engine coordinator bridging raw media sessions, playback controls, volume state, and UI event signals.
+  - Windows Volume Control: Integrates system audio endpoint control via CoreAudio Win32 COM / Pycaw.
+  - System Tray: Background process host with context menu for Show/Hide, Settings, and Exit.
+  - Global Hotkeys: OS-level keyboard shortcuts registered via Win32 `RegisterHotKey`.
+  - Dynamic Island UI: Frameless top-center floating window morphing cleanly between HIDDEN, COLLAPSED capsule (`180x40`), and EXPANDED card (`360x160`).
+
+--------------------------------------------------
+2. PROJECT ARCHITECTURE
+
+- `src/main.py`: Main application entry point, `QApplication` initialization, single-instance guard check, coordinator wiring, and tray/window setup.
+- `src/core/media_core.py`: Application coordinator managing active media session providers, playback state, track metadata, and volume state signals.
+- `src/core/settings.py`: Persistence manager (`SettingsManager`) over `QSettings` INI storage with default clamping and key-value safety.
+- `src/core/single_instance.py` / `src/ui/hotkeys.py`: Win32 single-instance IPC server & global hotkey manager using native Windows event filters (`WM_HOTKEY`).
+- `src/ui/main_window.py`: Core frameless window hosting the Dynamic Island layout container, state transitions, hover enter/leave events, and collapse timer.
+- `src/ui/components_island.py`: Presentation widgets including `CollapsedCapsuleWidget` (`180x40`), `ElidedLabel`, `ReactiveVisualizerWidget`, and source icon mapping.
+- `src/ui/frameless_window.py`: Custom base frameless window with pure black background/border path painting.
+- `src/ui/settings_dialog.py`: Preferences dialog hosting configuration controls, spinboxes, and `ShortcutRecorderWidget`.
+- `src/ui/system_tray.py`: System tray icon (`SystemTrayIcon`) and context menu integration.
+- `src/ui/theme.py`: Centralized color tokens (`COLOR_BG_ISLAND`, `COLOR_BORDER_ISLAND`), button stylesheets, and `get_svg_pixmap`/`get_svg_icon` vector engine.
+- `assets/icons/`: Standardized SVG vector assets (`play.svg`, `pause.svg`, `previous.svg`, `next.svg`, `volume.svg`, `mute.svg`, `spotify.svg`, `youtube.svg`, `vlc.svg`, `default_media.svg`).
+- `tests/`: 201 automated unit & integration test files covering core models, settings, hotkeys, state machine, top-center positioning, capsule layout, SVG icons, and shortcut recorder.
+
+--------------------------------------------------
+3. AUTHORITATIVE DOCUMENTATION HIERARCHY
+
+PROJECT_BIBLE.md
+    ↓
+Authoritative product specification
+
+PROJECT_STATUS.md
+    ↓
+Current implementation status & matrix
+
+README.md
+    ↓
+Human-facing project overview & user guide
+
+MEDIA_DOCK_DEVELOPMENT_HANDOFF.txt
+    ↓
+Development-session continuity & handoff snapshot
+
+Chat
+    ↓
+Current discussion & temporary turn context
+
+*Note*: `PROJECT_BIBLE.md` remains the supreme authoritative source of truth for all product architecture and behavior decisions.
+
+--------------------------------------------------
+4. COMPLETED DEVELOPMENT PHASES
+
+- Phase 8 (COMPLETE - 155/155 tests passing): Core architecture setup, GSMTC provider integration, volume controls, system tray, single instance, and PyInstaller executable pipeline.
+- Phase 9.1 (COMPLETE - 182/182 tests passing): Dynamic Island foundation. Established top-center screen positioning (`180x40` capsule, `360x160` card, 12px top offset), `HIDDEN` / `COLLAPSED` / `EXPANDED` state machine, hover expansion lifecycle, collapse timer (3500ms default), settings integration, system tray sync, and compact mode deprecation cleanup.
+- Phase 9.2.1 (COMPLETE - 185/185 tests passing): Collapse Delay fix. Range validation (500–30000 ms), settings persistence, active timer runtime interval updates, and hotkey error isolation.
+- Phase 9.2.2 (COMPLETE - 192/192 tests passing): SVG Icon Foundation & Pure Black Visual Baseline. Vector icon assets in `assets/icons/`, `QSvgRenderer` engine in `theme.py`, `#000000` pure black baseline, source-aware metadata formatting, 2-color GREEN/RED activity dot, SVG transport controls, and PyInstaller asset bundling (`datas=[("assets", "assets")]`).
+- Phase 9.2 V1 Refinements (COMPLETE - 201/201 tests passing): Capsule source icon fix (`spotify.svg`, `youtube.svg`, `vlc.svg`, `default_media.svg` without text glyph fallbacks), QSpinBox hitbox padding QSS fix, `#000000` pure black border stroke, and real interactive `ShortcutRecorderWidget` capturing native key events with strict 2-key and 3-key validation rules.
+
+--------------------------------------------------
+5. CURRENT V1 SPECIFICATION
+
+- Dynamic Island Lifecycle States:
+  - `HIDDEN`: Hidden when no media session is active or when disabled in settings.
+  - `COLLAPSED`: Small top-center ambient capsule (`180 x 40 px`) anchored 12px from top screen edge.
+  - `EXPANDED`: Full interactive media card (`360 x 160 px`) shown on mouse hover or explicit trigger.
+- Fixed Top-Center Geometry:
+  - Permanently anchored to top-center of primary monitor. Free window dragging removed.
+- Capsule Media Mapping:
+  - Spotify: `[Spotify SVG icon]  Song — Artist  ●`
+  - YouTube: `[YouTube SVG icon]  Video title  ●`
+  - VLC: `[VLC SVG icon]  Movie.mkv  ●`
+  - Unknown/Default: `[Default Media SVG icon]  Metadata  ●`
+- Status Dot Colors:
+  - `PLAYING`: GREEN (`#A6E3A1`)
+  - `PAUSED` / `STOPPED` / Inactive: RED (`#F38BA8`)
+- Visual Baseline:
+  - Island Background = `#000000` (Pure Black)
+  - Island Border = `#000000` (Pure Black 1px stroke)
+- Expanded Card Layout:
+  - 72x72 px album artwork on top-left.
+  - Song title and artist labels.
+  - Transport controls (Previous, Play/Pause, Next SVG buttons) placed directly underneath artist name.
+  - Position slider, time labels, volume slider, and mute button.
+  - Visualizer container area.
+
+--------------------------------------------------
+6. SETTINGS — CURRENT AGREED BEHAVIOR
+
+- Active Preferences (Persisted via SettingsManager):
+  - Close to System Tray (boolean, default True)
+  - Start Minimized to Tray (boolean, default False)
+  - Start with Windows (boolean, autostart registry key)
+  - Always On Top (boolean, default True)
+  - Enable Dynamic Island (boolean, default True)
+  - Collapse Delay (integer ms, 500–30000 range, default 3500)
+  - Global Shortcuts (Show/Hide, Play/Pause sequences)
+- Removed Preferences:
+  - Remember Window Position (removed; top-center position is authoritative)
+  - Compact Mode (removed as user-facing feature)
+- Always On Top Behavior:
+  - Currently Implemented: `Qt.WindowStaysOnTopHint` flag control.
+  - Future Target: Auto-hide island when full-screen apps or selected games are active.
+- Collapse Delay Behavior:
+  - Spinbox range 500ms to 30000ms.
+  - Saves cleanly without hotkey validation interference.
+  - Dynamically updates active `_collapse_timer` interval at runtime.
+
+--------------------------------------------------
+7. GLOBAL SHORTCUT RECORDER
+
+- Component: `ShortcutRecorderWidget` in `src/ui/settings_dialog.py`.
+- Functionality: Replaces legacy text fields with interactive key-capture controls.
+- Interactive Flow:
+  User clicks Record -> Enters recording mode -> Listens to native `keyPressEvent` -> Captures modifier + key combination -> Validates length -> Renders key pill badges.
+- Strict Key Rules:
+  - Exactly 2 keys (1 modifier + 1 key) allowed (e.g. `Ctrl+M`).
+  - Exactly 3 keys (2 modifiers + 1 key) allowed (e.g. `Ctrl+Alt+Space`).
+  - 1-key shortcuts REJECTED with message `"Shortcuts must contain at least 2 keys (e.g. Ctrl+M or Ctrl+Alt+M)."`
+  - 4+ key shortcuts REJECTED with message `"Shortcuts cannot exceed 3 keys."`
+- Conflict & Windows Registration Error Reporting:
+  - Detects duplicate assignment between Show/Hide and Play/Pause: `"Show/Hide and Play/Pause cannot use the same shortcut."`
+  - Reports Windows OS registration failure cleanly on `lbl_error`.
+  - Automatic rollback in `GlobalHotkeyManager` if registration fails.
+- Manual Verification Status: Source implementation complete and 100% test-backed; packaged binary manual verification pending.
+
+--------------------------------------------------
+8. SVG ICON SYSTEM
+
+- Icon Assets Directory: `assets/icons/`
+- Included Vector Icons:
+  `play.svg`, `pause.svg`, `previous.svg`, `next.svg`, `volume.svg`, `mute.svg`, `spotify.svg`, `youtube.svg`, `vlc.svg`, `default_media.svg`
+- Rendering Architecture: `PySide6.QtSvg.QSvgRenderer` via `get_svg_pixmap()` and `get_svg_icon()` in `src/ui/theme.py`.
+- Dynamic Tinting & Fallback: Replaces `currentColor` with target `QColor` hex; falls back to `default_media.svg` cleanly.
+- Bundling: Included in PyInstaller executable via `datas=[("assets", "assets")]` in `MediaDock.spec` and `sys._MEIPASS` path resolution. Text/emoji font glyphs deprecated.
+
+--------------------------------------------------
+9. VISUALIZER STATUS
+
+- Current Implementation: 5-bar timer-driven simulated sine visualizer prototype.
+- Final V1 Target: Live audio-reactive waveform reacting to playing system audio.
+- Required V1 Characteristics:
+  1. Fixed bar width
+  2. Fixed bar spacing
+  3. Variable bar height
+  4. Symmetrical vertical mirroring around central horizontal axis
+  5. Many bars
+  6. Smooth movement
+- Audio Engine Note: Live audio capture engine is NOT yet implemented. Do not claim audio analysis is active.
+
+--------------------------------------------------
+10. THEME / CUSTOMIZATION STATUS
+
+- Baseline Visual Testing Theme: Pure Black (`#000000` background, `#000000` border).
+- Standard Catppuccin Base Tokens: Kept in `theme.py` for settings dialog and standard controls.
+- V1 Target: Simple user controls for Background, Accent, and Visualizer colors.
+- Advanced Customization / Album-art color extraction: Reserved for V2/V3 roadmap.
+
+--------------------------------------------------
+11. KNOWN CURRENT STATE
+
+- Test Suite: 201 / 201 unit & integration tests passing cleanly (`4.112s`).
+- Code Formatting: `git diff --check` passes with 0 warnings.
+- Git Commit: No git commit made.
+- Source Code: Unstaged changes in working tree are intentional and represent Phase 9.2 V1 refinements.
+- Assets: `assets/icons/*.svg` created and present.
+- Pending Manual Verification: Packaged executable manual smoke test of latest V1 refinements.
+
+--------------------------------------------------
+12. TOMORROW'S EXACT NEXT TASK
+
+Begin tomorrow by performing manual verification of the V1 refinement features in the Python environment / packaged executable:
+
+A. Capsule:
+- Verify Spotify gets `spotify.svg`.
+- Verify YouTube gets `youtube.svg`.
+- Verify VLC gets `vlc.svg`.
+- Verify no musical note text glyph fallback appears.
+
+B. Collapse Delay:
+- Verify QSpinBox up/down arrow hitboxes are cleanly clickable.
+- Verify value change saves without error.
+- Verify setting persists after reopening dialog.
+- Verify timer uses saved interval during hover exit.
+
+C. Border:
+- Verify capsule and expanded card render `#000000` pure black borders.
+
+D. Shortcut Recorder:
+- Click Record button.
+- Test pressing 2-key combination (e.g. `Ctrl+M`).
+- Test pressing 3-key combination (e.g. `Ctrl+Alt+Space`).
+- Verify key pill badges render nicely.
+- Test pressing 1-key (verify rejection error).
+- Test pressing 4-key (verify rejection error).
+- Test duplicate assignment error.
+- Test saving and reopening preferences.
+- Test actual OS global hotkey triggering.
+
+After manual testing passes:
+1. Run full test suite: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`
+2. Run git diff check: `git diff --check`
+3. Rebuild executable: `.venv\Scripts\python.exe scripts/build.py`
+4. Smoke test rebuilt executable: `dist/MediaDock.exe`
+
+--------------------------------------------------
+13. NEXT DEVELOPMENT STEP AFTER VERIFICATION
+
+Phase 9.2.4 — True Audio-Reactive Visualizer Component (Mirrored Waveform)
+
+Before coding:
+- Inspect Windows audio API options (WASAPI loopback audio capture vs Pycaw / CoreAudio).
+- Design audio analysis layer separately from UI.
+- Implement live mirrored waveform widget (fixed width, fixed spacing, variable height, central axis vertical mirroring, smooth movement).
+
+--------------------------------------------------
+14. FUTURE ROADMAP
+
+- V1: Dynamic Island foundation, source-aware capsule, SVG icon system, working settings dialog, interactive 2/3 key shortcut recorder, pure black baseline, live audio-reactive visualizer target.
+- V1.5: Richer visual polish, smoother property morphing animations, expanded metadata details, visualizer styling controls, basic theme customization.
+- V2: Advanced Dynamic Island interactions, full-screen app/game auto-hide, album-art adaptive color extraction, advanced visualizer presets.
+- V3: DSP spectrum processing, real-time multi-band FFT audio engine, advanced audio-driven ambient visual effects.
+
+--------------------------------------------------
+15. DEVELOPMENT RULES
+
+- Do not rewrite working code unnecessarily.
+- Preserve existing architecture and state machine logic.
+- Make incremental changes and run test suite frequently.
+- Do not commit changes unless explicitly instructed.
+- Do not reset or discard working tree modifications.
+- Never declare a feature complete without empirical test verification.
+- Keep `PROJECT_BIBLE.md` authoritative for all product decisions.
+- Maintain clear separation between media core logic and UI widgets.
+
+--------------------------------------------------
+16. CURRENT REPOSITORY / GIT STATE
+
+Exact `git status` output:
+```
+On branch master
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   MediaDock.spec
+	modified:   PROJECT_BIBLE.md
+	modified:   PROJECT_STATUS.md
+	modified:   README.md
+	modified:   src/core/media_core.py
+	modified:   src/core/settings.py
+	modified:   src/main.py
+	modified:   src/ui/frameless_window.py
+	modified:   src/ui/main_window.py
+	modified:   src/ui/settings_dialog.py
+	modified:   src/ui/system_tray.py
+	modified:   src/ui/theme.py
+	modified:   tests/test_compact_mode_and_snapping.py
+	modified:   tests/test_integration_step5.py
+	modified:   tests/test_settings.py
+	modified:   tests/test_settings_dialog.py
+	modified:   tests/test_system_tray.py
+	modified:   tests/test_window.py
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	assets/
+	src/ui/components_island.py
+	tests/test_components_island.py
+	tests/test_dynamic_island_state_machine.py
+	tests/test_shortcut_recorder_and_refinements.py
+	tests/test_svg_icons_and_visual_baseline.py
+	tests/test_top_center_positioning.py
+
+no changes added to commit (use "git add" and/or "git commit -a")
+```
+
+`git diff --check` result:
+Clean (0 formatting errors/warnings).
+
+--------------------------------------------------
+17. FINAL SESSION SNAPSHOT
+
+CURRENT SESSION STATUS:
+- Current task: Phase 9.2 V1 refinements
+- Implementation: COMPLETE
+- Automated tests: 201/201 PASS
+- Diff check: CLEAN
+- Manual packaged executable verification: PENDING
+- Next action: Manual verification of refinements, then rebuild packaged executable
+- Audio-reactive visualizer: NOT STARTED
+- Git commit: NONE

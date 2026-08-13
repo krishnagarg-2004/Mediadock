@@ -2,8 +2,8 @@
 
 import time
 from typing import Any, Optional
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QAbstractAnimation
-from PySide6.QtGui import QKeyEvent, QColor, QFont, QPixmap, QPainter, QCloseEvent, QIcon, QPen, QPainterPath, QAction
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QAbstractAnimation, QRect, QEasingCurve
+from PySide6.QtGui import QKeyEvent, QColor, QFont, QPixmap, QPainter, QCloseEvent, QIcon, QPen, QPainterPath, QAction, QGuiApplication
 
 from PySide6.QtWidgets import (
     QApplication,
@@ -18,17 +18,30 @@ from PySide6.QtWidgets import (
 )
 
 
+from enum import Enum, auto
+
+
+class DynamicIslandState(Enum):
+    """Authoritative presentation states for the Dynamic Island."""
+    HIDDEN = auto()
+    COLLAPSED = auto()
+    EXPANDED = auto()
+
+
 from src.core.models import TrackInfo, PlaybackStatus, VolumeState
 from src.core.media_core import MediaCore
 from src.core.settings import SettingsManager
 from src.ui.frameless_window import FramelessWindow
 from src.ui.components import ElidedLabel
+from src.ui.components_island import ReactiveVisualizerWidget, CollapsedCapsuleWidget
 from src.ui.theme import (
+    COLOR_BG_ISLAND,
     COLOR_ACCENT_BLUE,
     extract_dominant_color,
     get_button_stylesheet,
     get_slider_stylesheet,
     get_status_badge_style,
+    get_svg_icon,
 )
 
 
@@ -78,8 +91,13 @@ def _format_time_ms(ms: int) -> str:
     return f"{minutes:02d}:{seconds:02d}"
 
 
+TOP_OFFSET_PX: int = 12
+COLLAPSED_SIZE = (180, 40)
+EXPANDED_SIZE = (360, 160)
+
+
 class MainWindow(FramelessWindow):
-    """Main floating widget window for MediaDock with interactive controls and progress tracking."""
+    """Main application widget window for MediaDock with interactive controls and progress tracking."""
 
     def __init__(
         self,
@@ -87,15 +105,27 @@ class MainWindow(FramelessWindow):
         settings_manager: Optional[SettingsManager] = None,
         parent: Optional[QWidget] = None,
         border_radius: float = 16.0,
-        bg_color: QColor = QColor("#1E1E2E"),
+        bg_color: QColor = COLOR_BG_ISLAND,
     ) -> None:
-        super().__init__(parent, border_radius=border_radius, bg_color=bg_color)
+        super().__init__(parent, border_radius=border_radius, bg_color=bg_color, allow_drag=False)
         self.setWindowTitle("MediaDock")
-        self.resize(360, 140)
 
         self._media_core = media_core
         self._settings_manager = settings_manager or SettingsManager()
         self._default_art_pixmap = self._create_default_art_pixmap()
+
+        # Dynamic Island State Machine & Collapse Timer Initialization
+        self._state: DynamicIslandState = DynamicIslandState.HIDDEN
+        self._collapse_timer = QTimer(self)
+        self._collapse_timer.setSingleShot(True)
+        self._collapse_timer.setInterval(self._settings_manager.get_collapse_delay_ms())
+        self._collapse_timer.timeout.connect(self._on_collapse_timer_timeout)
+
+        # Dynamic Island Geometry Animation (180 ms OutCubic pop-in / pop-out)
+        self._geom_anim = QPropertyAnimation(self, b"geometry", self)
+        self._geom_anim.setDuration(180)
+        self._geom_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._geom_anim.finished.connect(self._on_geom_anim_finished)
 
         # State tracking for UI clock interpolation & seeking state machine
         self._duration_ms: int = 0
@@ -104,6 +134,7 @@ class MainWindow(FramelessWindow):
         self._is_seeking: bool = False
         self._is_setting_volume: bool = False
         self._is_compact_mode: bool = False
+        self._is_quitting: bool = False
         self._current_status: PlaybackStatus = PlaybackStatus.CLOSED
         self._current_accent: QColor = COLOR_ACCENT_BLUE
 
@@ -118,11 +149,14 @@ class MainWindow(FramelessWindow):
 
         self._init_ui()
 
-        # Apply settings configuration
+        # Apply settings configuration & enforce initial state
         self._apply_always_on_top(self._settings_manager.get_always_on_top())
-        self._restore_position()
-        self.set_compact_mode(self._settings_manager.get_compact_mode())
         self._settings_manager.settings_changed.connect(self._on_setting_changed)
+
+        # Listen for primary screen geometry changes
+        primary_screen = QGuiApplication.primaryScreen()
+        if primary_screen:
+            primary_screen.geometryChanged.connect(lambda _: self.update_top_center_position())
 
         # Setup UI position interpolation QTimer (250 ms)
         self._position_timer = QTimer(self)
@@ -132,64 +166,202 @@ class MainWindow(FramelessWindow):
         if self._media_core:
             self._connect_media_core()
 
+        # Initial State Calculation
+        if not self._settings_manager.get_dynamic_island_enabled():
+            self.set_state(DynamicIslandState.HIDDEN, animate=False)
+        elif self._media_core and self._media_core.is_session_available():
+            self.set_state(DynamicIslandState.COLLAPSED, animate=False)
+        else:
+            self.set_state(DynamicIslandState.HIDDEN, animate=False)
+
+    @property
+    def island_state(self) -> DynamicIslandState:
+        """Return current authoritative DynamicIslandState."""
+        return self._state
+
+    def _on_geom_anim_finished(self) -> None:
+        """Lock fixed size for target state upon pop-in / pop-out animation completion."""
+        if self._state == DynamicIslandState.COLLAPSED:
+            target_rect = self.compute_top_center_collapsed_geometry()
+            self.setGeometry(target_rect)
+            self._capsule_widget.setFixedSize(COLLAPSED_SIZE[0], COLLAPSED_SIZE[1])
+            self.setFixedSize(COLLAPSED_SIZE[0], COLLAPSED_SIZE[1])
+        elif self._state == DynamicIslandState.EXPANDED:
+            target_rect = self.compute_top_center_expanded_geometry()
+            self.setGeometry(target_rect)
+            self._expanded_widget.setFixedSize(EXPANDED_SIZE[0], EXPANDED_SIZE[1])
+            self.setFixedSize(EXPANDED_SIZE[0], EXPANDED_SIZE[1])
+
+    def set_state(self, state: DynamicIslandState, animate: bool = True) -> None:
+        """Transition Dynamic Island to new state (HIDDEN, COLLAPSED, or EXPANDED) with optional pop-in/pop-out animation."""
+        if not self._settings_manager.get_dynamic_island_enabled():
+            state = DynamicIslandState.HIDDEN
+
+        old_state = self._state
+        self._state = state
+
+        if state == DynamicIslandState.HIDDEN:
+            if self._collapse_timer.isActive():
+                self._collapse_timer.stop()
+            if self._geom_anim.state() == QAbstractAnimation.State.Running:
+                self._geom_anim.stop()
+            self._capsule_widget.hide()
+            self._expanded_widget.hide()
+            self.hide()
+
+        elif state == DynamicIslandState.COLLAPSED:
+            if self._collapse_timer.isActive():
+                self._collapse_timer.stop()
+
+            target_rect = self.compute_top_center_collapsed_geometry()
+
+            if animate and old_state == DynamicIslandState.EXPANDED and self.isVisible():
+                if self._geom_anim.state() == QAbstractAnimation.State.Running:
+                    self._geom_anim.stop()
+
+                start_rect = self.geometry()
+
+                self.setMinimumSize(0, 0)
+                self.setMaximumSize(16777215, 16777215)
+                self._expanded_widget.setMinimumSize(0, 0)
+                self._expanded_widget.setMaximumSize(16777215, 16777215)
+                self._capsule_widget.setMinimumSize(0, 0)
+                self._capsule_widget.setMaximumSize(16777215, 16777215)
+
+                self._expanded_widget.hide()
+                self._capsule_widget.show()
+
+                self._geom_anim.setStartValue(start_rect)
+                self._geom_anim.setEndValue(target_rect)
+                self._geom_anim.start()
+            else:
+                if self._geom_anim.state() == QAbstractAnimation.State.Running:
+                    self._geom_anim.stop()
+                self._expanded_widget.hide()
+                self._capsule_widget.show()
+                self._capsule_widget.setFixedSize(COLLAPSED_SIZE[0], COLLAPSED_SIZE[1])
+                self.setFixedSize(COLLAPSED_SIZE[0], COLLAPSED_SIZE[1])
+                self.setGeometry(target_rect)
+                self.show()
+
+        elif state == DynamicIslandState.EXPANDED:
+            if self._collapse_timer.isActive():
+                self._collapse_timer.stop()
+
+            target_rect = self.compute_top_center_expanded_geometry()
+
+            if animate and old_state == DynamicIslandState.COLLAPSED and self.isVisible():
+                if self._geom_anim.state() == QAbstractAnimation.State.Running:
+                    self._geom_anim.stop()
+
+                start_rect = self.geometry()
+
+                self.setMinimumSize(0, 0)
+                self.setMaximumSize(16777215, 16777215)
+                self._expanded_widget.setMinimumSize(0, 0)
+                self._expanded_widget.setMaximumSize(16777215, 16777215)
+                self._capsule_widget.setMinimumSize(0, 0)
+                self._capsule_widget.setMaximumSize(16777215, 16777215)
+
+                self._capsule_widget.hide()
+                self._expanded_widget.show()
+
+                self._geom_anim.setStartValue(start_rect)
+                self._geom_anim.setEndValue(target_rect)
+                self._geom_anim.start()
+            else:
+                if self._geom_anim.state() == QAbstractAnimation.State.Running:
+                    self._geom_anim.stop()
+                self._capsule_widget.hide()
+                self._expanded_widget.show()
+                self._expanded_widget.setFixedSize(EXPANDED_SIZE[0], EXPANDED_SIZE[1])
+                self.setFixedSize(EXPANDED_SIZE[0], EXPANDED_SIZE[1])
+                self.setGeometry(target_rect)
+                self.show()
+
+    def toggle_dynamic_island_visibility(self) -> None:
+        """Toggle Dynamic Island between HIDDEN and COLLAPSED/EXPANDED."""
+        if self._state == DynamicIslandState.HIDDEN:
+            if self._settings_manager.get_dynamic_island_enabled():
+                self.set_state(DynamicIslandState.COLLAPSED)
+        else:
+            self.set_state(DynamicIslandState.HIDDEN)
+
+    def enterEvent(self, event) -> None:
+        """Handle mouse enter event on Dynamic Island."""
+        try:
+            super().enterEvent(event)
+        except Exception:
+            pass
+        if self._state == DynamicIslandState.COLLAPSED:
+            if self._collapse_timer.isActive():
+                self._collapse_timer.stop()
+            self.set_state(DynamicIslandState.EXPANDED)
+        elif self._state == DynamicIslandState.EXPANDED:
+            if self._collapse_timer.isActive():
+                self._collapse_timer.stop()
+
+    def leaveEvent(self, event) -> None:
+        """Handle mouse leave event on Dynamic Island."""
+        super().leaveEvent(event)
+        if self._state == DynamicIslandState.EXPANDED:
+            delay_ms = self._settings_manager.get_collapse_delay_ms()
+            self._collapse_timer.start(delay_ms)
+
+    def _on_collapse_timer_timeout(self) -> None:
+        """Single-shot collapse timer timeout handler."""
+        if self._state == DynamicIslandState.EXPANDED:
+            self.set_state(DynamicIslandState.COLLAPSED)
+
+    def compute_top_center_geometry(self, width: int, height: int) -> QRect:
+        """Calculate top-center QRect on primary screen work area with TOP_OFFSET_PX margin."""
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return QRect(0, 0, width, height)
+        geom = screen.availableGeometry()
+        x = geom.left() + (geom.width() - width) // 2
+        y = geom.top() + TOP_OFFSET_PX
+        return QRect(x, y, width, height)
+
+    def compute_top_center_collapsed_geometry(self) -> QRect:
+        """Calculate target top-center QRect for COLLAPSED state (180x40 px)."""
+        return self.compute_top_center_geometry(COLLAPSED_SIZE[0], COLLAPSED_SIZE[1])
+
+    def compute_top_center_expanded_geometry(self) -> QRect:
+        """Calculate target top-center QRect for EXPANDED state (360x160 px)."""
+        return self.compute_top_center_geometry(EXPANDED_SIZE[0], EXPANDED_SIZE[1])
+
+    def update_top_center_position(self, width: Optional[int] = None, height: Optional[int] = None) -> None:
+        """Reposition and resize window to top-center of primary screen work area."""
+        if width is not None and height is not None:
+            w, h = width, height
+        elif self._state == DynamicIslandState.EXPANDED:
+            w, h = EXPANDED_SIZE
+        else:
+            w, h = COLLAPSED_SIZE
+        target_rect = self.compute_top_center_geometry(w, h)
+        self.setGeometry(target_rect)
+
+    def showEvent(self, event) -> None:
+        """Ensure top-center position is updated upon window show event."""
+        super().showEvent(event)
+        self.update_top_center_position()
+
     @property
     def is_compact_mode(self) -> bool:
-        """Return True if MainWindow is currently in compact view mode (240x48)."""
-        return self._is_compact_mode
+        """Deprecated compatibility property. Return True if Dynamic Island is in COLLAPSED state."""
+        return self._state == DynamicIslandState.COLLAPSED
 
     def set_compact_mode(self, enabled: bool) -> None:
-        """Switch between Full Mode (360x140 px) and Compact View Mode (240x48 px)."""
+        """Deprecated compatibility wrapper. Map enabled=True to COLLAPSED state and False to EXPANDED state."""
         self._is_compact_mode = enabled
         if self._settings_manager and self._settings_manager.get_compact_mode() != enabled:
             self._settings_manager.set_compact_mode(enabled)
 
         if enabled:
-            # Hide non-compact widgets
-            self.art_label.hide()
-            self.artist_label.hide()
-            self.btn_prev.hide()
-            self.btn_mute.hide()
-            self.slider_volume.hide()
-            self.status_label.hide()
-            self.lbl_position.hide()
-            self.lbl_duration.hide()
-            self.progress_slider.hide()
-
-            # Set compact dimensions (240x48 px)
-            self.setMinimumSize(240, 48)
-            self.setMaximumSize(240, 48)
-            self.resize(240, 48)
+            self.set_state(DynamicIslandState.COLLAPSED)
         else:
-            # Reset fixed size constraints first
-            self.setMinimumSize(0, 0)
-            self.setMaximumSize(16777215, 16777215)
-
-            # Show full-mode widgets
-            self.art_label.show()
-            self.artist_label.show()
-            self.btn_prev.show()
-            self.status_label.show()
-            self.lbl_position.show()
-            self.lbl_duration.show()
-            self.progress_slider.show()
-
-            # Restore volume control if supported
-            if self._media_core:
-                vol_state = self._media_core.get_volume_state()
-                if vol_state.is_supported:
-                    self.btn_mute.show()
-                    self.slider_volume.show()
-                else:
-                    self.btn_mute.hide()
-                    self.slider_volume.hide()
-            else:
-                self.btn_mute.show()
-                self.slider_volume.show()
-
-            # Set full dimensions (360x140 px)
-            self.setMinimumSize(360, 140)
-            self.setMaximumSize(360, 140)
-            self.resize(360, 140)
+            self.set_state(DynamicIslandState.EXPANDED)
 
 
     def _create_default_art_pixmap(self) -> QPixmap:
@@ -224,36 +396,50 @@ class MainWindow(FramelessWindow):
         if self.isVisible():
             self.show()
 
+    def force_close(self) -> None:
+        """Flag window as quitting so closeEvent accepts closing instead of hiding to tray."""
+        self._is_quitting = True
+        self.close()
+
     def _restore_position(self) -> None:
-        """Restore window position from SettingsManager if remember_position is enabled."""
-        if self._settings_manager and self._settings_manager.get_remember_position():
-            x, y = self._settings_manager.get_window_position()
-            if x >= 0 and y >= 0:
-                self.move(x, y)
+        """Restore window top-center position on primary screen."""
+        self.update_top_center_position()
 
     def _save_position(self) -> None:
-        """Save current window position to SettingsManager if remember_position is enabled."""
-        if self._settings_manager and self._settings_manager.get_remember_position():
-            pos = self.pos()
-            if pos.x() >= 0 and pos.y() >= 0:
-                self._settings_manager.set_window_position(pos.x(), pos.y())
+        """Save current window position (no-op for top-center Dynamic Island)."""
+        pass
 
     def _on_setting_changed(self, key: str, value: Any) -> None:
         """Handle settings_changed signal from SettingsManager."""
         if key == "window/always_on_top":
             self._apply_always_on_top(bool(value))
-        elif key == "window/remember_position" and value:
-            self._save_position()
+        elif key == "dynamic_island/enabled":
+            if not bool(value):
+                self.set_state(DynamicIslandState.HIDDEN)
+            elif self._media_core and self._media_core.is_session_available():
+                self.set_state(DynamicIslandState.COLLAPSED)
+        elif key == "dynamic_island/collapse_delay_ms":
+            self._collapse_timer.setInterval(int(value))
         elif key == "window/compact_mode":
             if bool(value) != self._is_compact_mode:
                 self.set_compact_mode(bool(value))
 
-
     def _init_ui(self) -> None:
-        """Initialize the widget layout, metadata labels, transport buttons, and progress slider."""
+        """Initialize the widget layout, collapsed capsule container, and expanded card container."""
         root_layout = QVBoxLayout(self)
-        root_layout.setContentsMargins(15, 12, 15, 12)
-        root_layout.setSpacing(8)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        root_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+
+        # 1. Collapsed Capsule Component Container
+        self._capsule_widget = CollapsedCapsuleWidget(self)
+        root_layout.addWidget(self._capsule_widget)
+
+        # 2. Expanded Card Container Widget
+        self._expanded_widget = QWidget(self)
+        expanded_layout = QVBoxLayout(self._expanded_widget)
+        expanded_layout.setContentsMargins(15, 12, 15, 12)
+        expanded_layout.setSpacing(8)
 
         # Top section: Album Art + Meta & Transport Controls
         top_layout = QHBoxLayout()
@@ -261,7 +447,7 @@ class MainWindow(FramelessWindow):
         top_layout.setSpacing(12)
 
         # Left Column: Album Art Thumbnail
-        self.art_label = QLabel(self)
+        self.art_label = QLabel(self._expanded_widget)
         self.art_label.setFixedSize(72, 72)
         self.art_label.setPixmap(self._default_art_pixmap)
         self.art_label.setScaledContents(True)
@@ -273,23 +459,26 @@ class MainWindow(FramelessWindow):
         info_layout.setSpacing(4)
         info_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        self.title_label = ElidedLabel("MediaDock", self)
+        self.title_label = ElidedLabel("MediaDock", self._expanded_widget)
         title_font = QFont("Segoe UI", 10, QFont.Weight.Bold)
         self.title_label.setFont(title_font)
         self.title_label.setStyleSheet("color: #FFFFFF;")
 
-        self.artist_label = ElidedLabel("No Media Playing", self)
+        self.artist_label = ElidedLabel("No Media Playing", self._expanded_widget)
         sub_font = QFont("Segoe UI", 9)
         self.artist_label.setFont(sub_font)
         self.artist_label.setStyleSheet("color: #A6ADC8;")
 
-        self.status_label = QLabel("CLOSED", self)
+        self.status_label = QLabel("CLOSED", self._expanded_widget)
         status_font = QFont("Segoe UI", 8, QFont.Weight.Bold)
         self.status_label.setFont(status_font)
         text, text_hex, bg_hex = get_status_badge_style(PlaybackStatus.CLOSED)
         self.status_label.setStyleSheet(
             f"color: {text_hex}; background-color: {bg_hex}; border-radius: 4px; padding: 2px 6px;"
         )
+
+        # Reactive Visualizer
+        self._visualizer = ReactiveVisualizerWidget(bar_count=5, parent=self._expanded_widget)
 
         # Transport Controls Row
         controls_layout = QHBoxLayout()
@@ -299,29 +488,32 @@ class MainWindow(FramelessWindow):
 
         btn_style = get_button_stylesheet()
 
-        self.btn_prev = QPushButton("⏮", self)
+        self.btn_prev = QPushButton(self._expanded_widget)
         self.btn_prev.setFixedSize(30, 24)
         self.btn_prev.setStyleSheet(btn_style)
+        self.btn_prev.setIcon(get_svg_icon("previous", 14, QColor("#CDD6F4")))
         self.btn_prev.clicked.connect(self._on_btn_prev_clicked)
 
-        self.btn_play_pause = QPushButton("▶", self)
+        self.btn_play_pause = QPushButton(self._expanded_widget)
         self.btn_play_pause.setFixedSize(36, 24)
         self.btn_play_pause.setStyleSheet(btn_style)
+        self.btn_play_pause.setIcon(get_svg_icon("play", 14, QColor("#CDD6F4")))
         self.btn_play_pause.clicked.connect(self._on_btn_play_pause_clicked)
 
-        self.btn_next = QPushButton("⏭", self)
+        self.btn_next = QPushButton(self._expanded_widget)
         self.btn_next.setFixedSize(30, 24)
         self.btn_next.setStyleSheet(btn_style)
+        self.btn_next.setIcon(get_svg_icon("next", 14, QColor("#CDD6F4")))
         self.btn_next.clicked.connect(self._on_btn_next_clicked)
 
         # Master Volume & Mute Controls
-        self.btn_mute = QPushButton(self)
+        self.btn_mute = QPushButton(self._expanded_widget)
         self.btn_mute.setFixedSize(26, 24)
         self.btn_mute.setStyleSheet(btn_style)
-        self.btn_mute.setIcon(QIcon(create_volume_icon_pixmap(False)))
+        self.btn_mute.setIcon(get_svg_icon("volume", 14, QColor("#CDD6F4")))
         self.btn_mute.clicked.connect(self._on_btn_mute_clicked)
 
-        self.slider_volume = QSlider(Qt.Orientation.Horizontal, self)
+        self.slider_volume = QSlider(Qt.Orientation.Horizontal, self._expanded_widget)
         self.slider_volume.setRange(0, 100)
         self.slider_volume.setValue(100)
         self.slider_volume.setFixedWidth(56)
@@ -333,6 +525,7 @@ class MainWindow(FramelessWindow):
         controls_layout.addWidget(self.btn_next)
         controls_layout.addWidget(self.btn_mute)
         controls_layout.addWidget(self.slider_volume)
+        controls_layout.addWidget(self._visualizer)
         controls_layout.addWidget(self.status_label)
 
         info_layout.addWidget(self.title_label)
@@ -349,15 +542,15 @@ class MainWindow(FramelessWindow):
 
         time_font = QFont("Segoe UI", 8)
 
-        self.lbl_position = QLabel("00:00", self)
+        self.lbl_position = QLabel("00:00", self._expanded_widget)
         self.lbl_position.setFont(time_font)
         self.lbl_position.setStyleSheet("color: #A6ADC8;")
 
-        self.lbl_duration = QLabel("00:00", self)
+        self.lbl_duration = QLabel("00:00", self._expanded_widget)
         self.lbl_duration.setFont(time_font)
         self.lbl_duration.setStyleSheet("color: #A6ADC8;")
 
-        self.progress_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self.progress_slider = QSlider(Qt.Orientation.Horizontal, self._expanded_widget)
         self.progress_slider.setRange(0, 0)
         self.progress_slider.setValue(0)
         self.progress_slider.setStyleSheet(get_slider_stylesheet(self._current_accent))
@@ -371,8 +564,10 @@ class MainWindow(FramelessWindow):
         progress_layout.addWidget(self.progress_slider)
         progress_layout.addWidget(self.lbl_duration)
 
-        root_layout.addLayout(top_layout)
-        root_layout.addLayout(progress_layout)
+        expanded_layout.addLayout(top_layout)
+        expanded_layout.addLayout(progress_layout)
+
+        root_layout.addWidget(self._expanded_widget)
 
     def _connect_media_core(self) -> None:
         """Connect MediaCore signals to MainWindow slots and initialize display."""
@@ -385,6 +580,10 @@ class MainWindow(FramelessWindow):
             self.on_session_availability_changed
         )
         self._media_core.volume_changed.connect(self.on_volume_changed)
+        if hasattr(self._media_core, "audio_visualizer_updated"):
+            self._media_core.audio_visualizer_updated.connect(
+                self.on_audio_visualizer_updated
+            )
 
         # Initial display sync
         self.on_track_changed(self._media_core.get_current_track())
@@ -439,7 +638,8 @@ class MainWindow(FramelessWindow):
                 self._is_setting_volume = False
 
         icon_color = QColor("#A6ADC8") if state.is_muted else QColor("#CDD6F4")
-        self.btn_mute.setIcon(QIcon(create_volume_icon_pixmap(state.is_muted, color=icon_color)))
+        icon_name = "mute" if state.is_muted or state.volume_percent == 0 else "volume"
+        self.btn_mute.setIcon(get_svg_icon(icon_name, 14, icon_color))
 
 
     # --- Seeking State Machine ---
@@ -479,14 +679,30 @@ class MainWindow(FramelessWindow):
     # --- Qt Signal Slots ---
 
     def on_track_changed(self, track: TrackInfo) -> None:
-        """Slot for track_changed signal. Updates title, artist, art, accent, and timeline."""
+        """Slot for track_changed signal. Updates capsule and expanded track labels."""
+        source_name = ""
+        if self._media_core and hasattr(self._media_core, "get_active_session_info"):
+            try:
+                sess = self._media_core.get_active_session_info()
+                if sess:
+                    source_name = getattr(sess, "display_name", "") or getattr(sess, "app_id", "") or ""
+            except Exception:
+                pass
+        if not source_name and track and hasattr(track, "app_id") and track.app_id:
+            source_name = track.app_id
+
+        self._capsule_widget.set_source_info(source_name, str(track.title), str(track.artist))
+
+        # Update expanded card metadata
         self.title_label.setText(track.title)
         self.artist_label.setText(track.artist)
         self._update_album_art(track.album_art_bytes)
 
-        # Dynamic album art accent extraction & progress slider tinting
+        # Dynamic album art accent extraction & styling
         self._current_accent = extract_dominant_color(track.album_art_bytes)
         self.progress_slider.setStyleSheet(get_slider_stylesheet(self._current_accent))
+        self._capsule_widget.set_accent_color(self._current_accent)
+        self._visualizer.set_bar_color(self._current_accent)
 
         # Timeline state update
         self._duration_ms = max(0, track.duration_ms)
@@ -506,9 +722,17 @@ class MainWindow(FramelessWindow):
         # Trigger smooth opacity transition
         self._trigger_track_fade_animation()
 
+    def on_audio_visualizer_updated(self, bars: list) -> None:
+        """Slot for audio_visualizer_updated signal. Updates visualizer bar heights during active playback."""
+        if self._current_status == PlaybackStatus.PLAYING:
+            self._visualizer.set_bar_heights(bars)
+
     def on_status_changed(self, status: PlaybackStatus) -> None:
-        """Slot for playback_status_changed signal. Updates status badge, play/pause button, and timer."""
+        """Slot for playback_status_changed signal. Updates badge, capsule, and visualizer."""
         self._current_status = status
+
+        self._capsule_widget.set_playback_status(status)
+        self._visualizer.set_playback_status(status)
 
         text, text_hex, bg_hex = get_status_badge_style(status)
         self.status_label.setText(text)
@@ -517,34 +741,33 @@ class MainWindow(FramelessWindow):
         )
 
         if status == PlaybackStatus.PLAYING:
-            self.btn_play_pause.setText("⏸")
+            self.btn_play_pause.setIcon(get_svg_icon("pause", 14, QColor("#CDD6F4")))
             if self._duration_ms > 0 and not self._position_timer.isActive():
                 self._position_timer.start()
-        elif status == PlaybackStatus.PAUSED:
-            self.btn_play_pause.setText("▶")
+        elif status in (PlaybackStatus.PAUSED, PlaybackStatus.STOPPED, PlaybackStatus.CLOSED):
+            self.btn_play_pause.setIcon(get_svg_icon("play", 14, QColor("#CDD6F4")))
             if self._position_timer.isActive():
                 self._position_timer.stop()
-        elif status == PlaybackStatus.STOPPED:
-            self.btn_play_pause.setText("▶")
-            if self._position_timer.isActive():
-                self._position_timer.stop()
-        else:
-            self.btn_play_pause.setText("▶")
-            if self._position_timer.isActive():
-                self._position_timer.stop()
+            self._visualizer.clear_bar_heights()
 
     def on_session_availability_changed(self, available: bool) -> None:
-        """Slot for session_availability_changed signal. Enables/disables controls."""
+        """Slot for session_availability_changed signal. Updates control state & Dynamic Island visibility."""
         self.btn_prev.setEnabled(available)
         self.btn_play_pause.setEnabled(available)
         self.btn_next.setEnabled(available)
         self.progress_slider.setEnabled(available)
 
-        if not available:
+        if available:
+            if self._settings_manager.get_dynamic_island_enabled():
+                if self._state == DynamicIslandState.HIDDEN:
+                    self.set_state(DynamicIslandState.COLLAPSED)
+        else:
             if self._position_timer.isActive():
                 self._position_timer.stop()
             self.on_track_changed(TrackInfo.empty())
             self.on_status_changed(PlaybackStatus.CLOSED)
+            # Session closed -> transition to HIDDEN while process remains alive
+            self.set_state(DynamicIslandState.HIDDEN)
 
     def _update_album_art(self, art_bytes: Optional[bytes]) -> None:
         """Load raw image bytes into QPixmap in memory without disk files."""
@@ -572,33 +795,36 @@ class MainWindow(FramelessWindow):
             super().keyPressEvent(event)
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        """Handle window close event based on close_to_tray preference."""
+        """Handle window close event based on close_to_tray preference and quit state."""
         if self._fade_anim.state() == QAbstractAnimation.State.Running:
             self._fade_anim.stop()
         self._opacity_effect.setOpacity(1.0)
 
         if self._position_timer.isActive():
             self._position_timer.stop()
+        if self._collapse_timer.isActive():
+            self._collapse_timer.stop()
 
         self._save_position()
 
-        if self._settings_manager and self._settings_manager.get_close_to_tray():
+        # If app is explicitly quitting, accept close event
+        if self._is_quitting:
+            event.accept()
+        elif self._settings_manager and self._settings_manager.get_close_to_tray():
             event.ignore()
-            self.hide()
+            self.set_state(DynamicIslandState.HIDDEN)
         else:
             event.accept()
             QApplication.quit()
 
     def contextMenuEvent(self, event) -> None:
-        """Show context menu with Compact Mode toggle on right click."""
+        """Show context menu on right click."""
         menu = QMenu(self)
         menu.setStyleSheet(
             "QMenu { background-color: #1E1E2E; color: #CDD6F4; border: 1px solid #45475A; border-radius: 6px; padding: 4px; }\n"
             "QMenu::item:selected { background-color: #313244; border-radius: 4px; }"
         )
-        compact_action = QAction("Compact Mode", self)
-        compact_action.setCheckable(True)
-        compact_action.setChecked(self._is_compact_mode)
-        compact_action.triggered.connect(lambda checked: self.set_compact_mode(checked))
-        menu.addAction(compact_action)
+        toggle_action = QAction("Toggle Dynamic Island", self)
+        toggle_action.triggered.connect(self.toggle_dynamic_island_visibility)
+        menu.addAction(toggle_action)
         menu.exec(event.globalPos())

@@ -49,13 +49,11 @@ class TestSettingsManager(unittest.TestCase):
         self.assertIsInstance(self.settings.get_always_on_top(), bool)
         self.assertTrue(self.settings.get_always_on_top())
 
-        self.assertIsInstance(self.settings.get_remember_position(), bool)
-        self.assertTrue(self.settings.get_remember_position())
+        self.assertIsInstance(self.settings.get_dynamic_island_enabled(), bool)
+        self.assertTrue(self.settings.get_dynamic_island_enabled())
 
-        pos_x, pos_y = self.settings.get_window_position()
-        self.assertIsInstance(pos_x, int)
-        self.assertIsInstance(pos_y, int)
-        self.assertEqual((pos_x, pos_y), (-1, -1))
+        self.assertIsInstance(self.settings.get_collapse_delay_ms(), int)
+        self.assertEqual(self.settings.get_collapse_delay_ms(), 3500)
 
     def test_getters_and_setters(self) -> None:
         """Verify typed setters update values cleanly."""
@@ -68,17 +66,31 @@ class TestSettingsManager(unittest.TestCase):
         self.settings.set_always_on_top(False)
         self.assertFalse(self.settings.get_always_on_top())
 
-        self.settings.set_remember_position(False)
-        self.assertFalse(self.settings.get_remember_position())
+        self.settings.set_dynamic_island_enabled(False)
+        self.assertFalse(self.settings.get_dynamic_island_enabled())
 
-        self.settings.set_window_position(300, 450)
-        self.assertEqual(self.settings.get_window_position(), (300, 450))
+        self.settings.set_collapse_delay_ms(5000)
+        self.assertEqual(self.settings.get_collapse_delay_ms(), 5000)
+
+    def test_collapse_delay_bounds_clamping(self) -> None:
+        """Verify set_collapse_delay_ms clamps inputs between 500 ms and 30000 ms safely."""
+        self.settings.set_collapse_delay_ms(2250)
+        self.assertEqual(self.settings.get_collapse_delay_ms(), 2250)
+
+        # Under min threshold (500) -> clamped to 500
+        self.settings.set_collapse_delay_ms(100)
+        self.assertEqual(self.settings.get_collapse_delay_ms(), 500)
+
+        # Over max threshold (30000) -> clamped to 30000
+        self.settings.set_collapse_delay_ms(45000)
+        self.assertEqual(self.settings.get_collapse_delay_ms(), 30000)
 
     def test_persistence_across_instances(self) -> None:
         """Verify settings written by one SettingsManager instance persist for another instance."""
         self.settings.set_close_to_tray(False)
         self.settings.set_start_hidden(True)
-        self.settings.set_window_position(120, 240)
+        self.settings.set_dynamic_island_enabled(False)
+        self.settings.set_collapse_delay_ms(4000)
 
         # Create second manager with same QSettings store
         second_qs = QSettings(self.tmp_file.name, QSettings.Format.IniFormat)
@@ -86,7 +98,8 @@ class TestSettingsManager(unittest.TestCase):
 
         self.assertFalse(second_mgr.get_close_to_tray())
         self.assertTrue(second_mgr.get_start_hidden())
-        self.assertEqual(second_mgr.get_window_position(), (120, 240))
+        self.assertFalse(second_mgr.get_dynamic_island_enabled())
+        self.assertEqual(second_mgr.get_collapse_delay_ms(), 4000)
 
 
     def test_settings_changed_signal_emission(self) -> None:
@@ -98,10 +111,8 @@ class TestSettingsManager(unittest.TestCase):
         mock_slot.assert_called_once_with("general/close_to_tray", False)
 
         mock_slot.reset_mock()
-        self.settings.set_window_position(100, 200)
-        self.assertEqual(mock_slot.call_count, 2)
-        mock_slot.assert_any_call("window/pos_x", 100)
-        mock_slot.assert_any_call("window/pos_y", 200)
+        self.settings.set_collapse_delay_ms(4000)
+        mock_slot.assert_called_once_with("dynamic_island/collapse_delay_ms", 4000)
 
     def test_setting_same_value_does_not_emit_signal(self) -> None:
         """Verify setting an existing unchanged value does not emit settings_changed unnecessarily."""
@@ -111,6 +122,65 @@ class TestSettingsManager(unittest.TestCase):
         # Value is already True by default
         self.settings.set_close_to_tray(True)
         mock_slot.assert_not_called()
+
+    def test_settings_manager_sync(self) -> None:
+        """Verify sync() method flushes settings without exception."""
+        self.settings.set_collapse_delay_ms(4500)
+        self.settings.sync()
+        self.assertEqual(self.settings.get_collapse_delay_ms(), 4500)
+
+    def test_default_qsettings_store_organization(self) -> None:
+        """Verify SettingsManager default store targets KrishnaOS/MediaDock organization."""
+        default_mgr = SettingsManager()
+        self.assertEqual(default_mgr._settings.organizationName(), "KrishnaOS")
+        self.assertEqual(default_mgr._settings.applicationName(), "MediaDock")
+
+    def test_main_window_force_close_and_close_event(self) -> None:
+        """Verify MainWindow force_close sets _is_quitting and closeEvent accepts closing."""
+        from PySide6.QtGui import QCloseEvent
+        from src.ui.main_window import MainWindow
+
+        win = MainWindow(settings_manager=self.settings)
+        self.settings.set_close_to_tray(True)
+
+        # Spontaneous user close event while running -> ignored to hide to tray
+        evt1 = QCloseEvent()
+        win.closeEvent(evt1)
+        self.assertFalse(evt1.isAccepted())
+
+        # Programmatic force_close (e.g. exit menu / OS shutdown) -> accepted
+        win.force_close()
+        evt2 = QCloseEvent()
+        win.closeEvent(evt2)
+        self.assertTrue(evt2.isAccepted())
+
+    def test_preferences_persist_across_tray_exit_and_relaunch(self) -> None:
+        """Verify non-default preferences persist cleanly across application tray exit simulation and fresh launch."""
+        from src.ui.settings_dialog import SettingsDialog
+        from src.ui.main_window import MainWindow
+
+        win = MainWindow(settings_manager=self.settings)
+
+        # 1. Modify preferences via SettingsDialog save_settings
+        dialog = SettingsDialog(settings_manager=self.settings, parent=win)
+        dialog.chk_close_to_tray.setChecked(False)
+        dialog.chk_start_hidden.setChecked(True)
+        dialog.chk_always_on_top.setChecked(False)
+        dialog.spn_collapse_delay.setValue(6500)
+        dialog.save_settings()
+
+        # 2. Simulate System Tray exit sync
+        self.settings.sync()
+
+        # 3. Instantiate fresh QSettings and SettingsManager instance
+        fresh_qs = QSettings(self.tmp_file.name, QSettings.Format.IniFormat)
+        fresh_mgr = SettingsManager(qsettings=fresh_qs)
+
+        # 4. Assert all saved values persist cleanly
+        self.assertFalse(fresh_mgr.get_close_to_tray())
+        self.assertTrue(fresh_mgr.get_start_hidden())
+        self.assertFalse(fresh_mgr.get_always_on_top())
+        self.assertEqual(fresh_mgr.get_collapse_delay_ms(), 6500)
 
 
 if __name__ == "__main__":

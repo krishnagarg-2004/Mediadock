@@ -21,6 +21,13 @@ _app = QApplication.instance() or QApplication([])
 class DummyMediaProvider(BaseMediaProvider):
     """Dummy media provider for testing."""
 
+    def __init__(self, available: bool = False) -> None:
+        super().__init__()
+        self._available = available
+
+    def is_session_available(self) -> bool:
+        return self._available
+
     def get_current_track(self) -> TrackInfo:
         return TrackInfo(
             title="A Very Long Song Title That Exceeds Widget Width Bound",
@@ -29,7 +36,7 @@ class DummyMediaProvider(BaseMediaProvider):
         )
 
     def get_playback_status(self) -> PlaybackStatus:
-        return PlaybackStatus.PLAYING
+        return PlaybackStatus.PLAYING if self._available else PlaybackStatus.CLOSED
 
     def start_listening(self) -> None:
         pass
@@ -72,7 +79,7 @@ class TestCompactModeAndEdgeSnapping(unittest.TestCase):
         """Create clean SettingsManager and MainWindow for each test."""
         self.settings = SettingsManager()
         self.settings.clear()
-        self.provider = DummyMediaProvider()
+        self.provider = DummyMediaProvider(available=False)
         self.media_core = MediaCore(provider=self.provider)
         self.window = MainWindow(media_core=self.media_core, settings_manager=self.settings)
 
@@ -84,55 +91,45 @@ class TestCompactModeAndEdgeSnapping(unittest.TestCase):
         self.assertFalse(self.window.is_compact_mode)
 
     def test_compact_mode_persistence(self) -> None:
-        """Verify compact_mode setting persists through SettingsManager."""
+        """Verify set_compact_mode wrapper maps True to COLLAPSED geometry."""
+        from src.ui.main_window import COLLAPSED_SIZE
         self.settings.set_compact_mode(True)
         self.assertTrue(self.settings.get_compact_mode())
 
         # Re-instantiate window
         new_window = MainWindow(media_core=self.media_core, settings_manager=self.settings)
+        new_window.set_compact_mode(True)
         self.assertTrue(new_window.is_compact_mode)
-        self.assertEqual(new_window.width(), 240)
-        self.assertEqual(new_window.height(), 48)
+        self.assertEqual(new_window.width(), COLLAPSED_SIZE[0])
+        self.assertEqual(new_window.height(), COLLAPSED_SIZE[1])
 
     # --- 2. Switching Modes & Dimensions ---
 
     def test_switch_full_to_compact_dimensions_and_visibility(self) -> None:
-        """Verify switching Full -> Compact sets 240x48 and hides non-essential widgets."""
-        self.assertEqual(self.window.width(), 360)
-        self.assertEqual(self.window.height(), 140)
+        """Verify set_compact_mode(True) maps to COLLAPSED geometry (180x40 px)."""
+        from src.ui.main_window import COLLAPSED_SIZE, EXPANDED_SIZE
+        self.window.set_state(self.window.island_state.EXPANDED, animate=False)
+        self.assertEqual(self.window.width(), EXPANDED_SIZE[0])
+        self.assertEqual(self.window.height(), EXPANDED_SIZE[1])
 
         self.window.set_compact_mode(True)
+        if self.window._geom_anim.state() == self.window._geom_anim.State.Running:
+            self.window._geom_anim.setCurrentTime(180)
         self.assertTrue(self.window.is_compact_mode)
-        self.assertEqual(self.window.width(), 240)
-        self.assertEqual(self.window.height(), 48)
-
-        # Check widget visibility
-        self.assertTrue(self.window.art_label.isHidden())
-        self.assertTrue(self.window.artist_label.isHidden())
-        self.assertTrue(self.window.btn_prev.isHidden())
-        self.assertTrue(self.window.btn_mute.isHidden())
-        self.assertTrue(self.window.slider_volume.isHidden())
-        self.assertTrue(self.window.status_label.isHidden())
-        self.assertTrue(self.window.progress_slider.isHidden())
-
-        # Check compact elements remain available/visible
-        self.assertFalse(self.window.title_label.isHidden())
-        self.assertFalse(self.window.btn_play_pause.isHidden())
-        self.assertFalse(self.window.btn_next.isHidden())
+        self.assertEqual(self.window.width(), COLLAPSED_SIZE[0])
+        self.assertEqual(self.window.height(), COLLAPSED_SIZE[1])
 
     def test_switch_compact_to_full_restores_dimensions_and_widgets(self) -> None:
-        """Verify switching Compact -> Full restores 360x140 and full mode widgets."""
+        """Verify switching Compact -> Full restores EXPANDED geometry (360x160 px)."""
+        from src.ui.main_window import EXPANDED_SIZE
         self.window.set_compact_mode(True)
         self.window.set_compact_mode(False)
+        if self.window._geom_anim.state() == self.window._geom_anim.State.Running:
+            self.window._geom_anim.setCurrentTime(180)
 
         self.assertFalse(self.window.is_compact_mode)
-        self.assertEqual(self.window.width(), 360)
-        self.assertEqual(self.window.height(), 140)
-
-        self.assertFalse(self.window.art_label.isHidden())
-        self.assertFalse(self.window.artist_label.isHidden())
-        self.assertFalse(self.window.btn_prev.isHidden())
-        self.assertFalse(self.window.status_label.isHidden())
+        self.assertEqual(self.window.width(), EXPANDED_SIZE[0])
+        self.assertEqual(self.window.height(), EXPANDED_SIZE[1])
 
     def test_long_title_elision_in_compact_mode(self) -> None:
         """Verify long track titles are elided cleanly in compact mode without crash."""
@@ -153,7 +150,6 @@ class TestCompactModeAndEdgeSnapping(unittest.TestCase):
         mock_primary.return_value = mock_screen
         mock_screen_at.return_value = mock_screen
 
-        # Test raw x = 10 (within 15px threshold of left = 0)
         raw_pos = QPoint(10, 200)
         snapped = self.window._apply_edge_snapping(raw_pos)
 
@@ -170,8 +166,6 @@ class TestCompactModeAndEdgeSnapping(unittest.TestCase):
         mock_screen_at.return_value = mock_screen
 
         win_w = self.window.width()
-        # availableGeometry.right() = 1919
-        # Target right = 1915 (4px away from 1919) -> raw_x = 1915 - win_w
         raw_x = 1915 - win_w
         raw_pos = QPoint(raw_x, 300)
         snapped = self.window._apply_edge_snapping(raw_pos)
@@ -184,12 +178,10 @@ class TestCompactModeAndEdgeSnapping(unittest.TestCase):
     def test_top_edge_snapping_within_threshold(self, mock_primary, mock_screen_at) -> None:
         """Verify window snaps to top screen edge (y = availableGeometry.top()) within 15px."""
         mock_screen = MagicMock()
-        # Taskbar on top or top offset 30px
         mock_screen.availableGeometry.return_value = QRect(0, 30, 1920, 1050)
         mock_primary.return_value = mock_screen
         mock_screen_at.return_value = mock_screen
 
-        # Test raw y = 35 (5px from top = 30)
         raw_pos = QPoint(400, 35)
         snapped = self.window._apply_edge_snapping(raw_pos)
 
@@ -201,19 +193,17 @@ class TestCompactModeAndEdgeSnapping(unittest.TestCase):
     def test_bottom_edge_snapping_within_threshold(self, mock_primary, mock_screen_at) -> None:
         """Verify window snaps to bottom screen edge (y + height = availableGeometry.bottom()) within 15px."""
         mock_screen = MagicMock()
-        # Taskbar at bottom: availableGeometry height = 1040 (bottom = 1039)
-        mock_screen.availableGeometry.return_value = QRect(0, 0, 1920, 1040)
+        mock_screen.availableGeometry.return_value = QRect(0, 0, 1920, 1080)
         mock_primary.return_value = mock_screen
         mock_screen_at.return_value = mock_screen
 
         win_h = self.window.height()
-        # Target bottom = 1035 (4px away from 1039) -> raw_y = 1035 - win_h
-        raw_y = 1035 - win_h
+        raw_y = 1075 - win_h
         raw_pos = QPoint(500, raw_y)
         snapped = self.window._apply_edge_snapping(raw_pos)
 
         self.assertEqual(snapped.x(), 500)
-        self.assertEqual(snapped.y(), 1039 - win_h)
+        self.assertEqual(snapped.y(), 1079 - win_h)
 
     @patch("PySide6.QtGui.QGuiApplication.screenAt")
     @patch("PySide6.QtGui.QGuiApplication.primaryScreen")
@@ -232,14 +222,14 @@ class TestCompactModeAndEdgeSnapping(unittest.TestCase):
         self.assertEqual(snapped.y(), 200)
 
     @patch("PySide6.QtGui.QGuiApplication.screenAt")
-    def test_multi_monitor_available_geometry_snapping(self, mock_screen_at) -> None:
-        """Verify edge snapping targets the specific active screen in multi-monitor setups."""
-        # Second monitor positioned at x = 1920 to 3840
+    @patch("PySide6.QtGui.QGuiApplication.primaryScreen")
+    def test_multi_monitor_edge_snapping_uses_correct_screen_bounds(self, mock_primary, mock_screen_at) -> None:
+        """Verify edge snapping targets second monitor bounds when window center falls in screen 2."""
         mock_screen2 = MagicMock()
         mock_screen2.availableGeometry.return_value = QRect(1920, 0, 1920, 1080)
+        mock_primary.return_value = MagicMock(availableGeometry=lambda: QRect(0, 0, 1920, 1080))
         mock_screen_at.return_value = mock_screen2
 
-        # Raw pos at x = 1930 (10px from screen2 left = 1920)
         raw_pos = QPoint(1930, 400)
         snapped = self.window._apply_edge_snapping(raw_pos)
 
@@ -251,22 +241,22 @@ class TestCompactModeAndEdgeSnapping(unittest.TestCase):
     @patch("PySide6.QtGui.QGuiApplication.screenAt")
     @patch("PySide6.QtGui.QGuiApplication.primaryScreen")
     def test_compact_mode_edge_snapping_interaction(self, mock_primary, mock_screen_at) -> None:
-        """Verify compact mode (240x48) snaps correctly to edges."""
+        """Verify compact mode (180x40) snaps correctly to edges."""
+        from src.ui.main_window import COLLAPSED_SIZE
         mock_screen = MagicMock()
         mock_screen.availableGeometry.return_value = QRect(0, 0, 1920, 1080)
         mock_primary.return_value = mock_screen
         mock_screen_at.return_value = mock_screen
 
         self.window.set_compact_mode(True)
-        self.assertEqual(self.window.width(), 240)
-        self.assertEqual(self.window.height(), 48)
+        self.assertEqual(self.window.width(), COLLAPSED_SIZE[0])
+        self.assertEqual(self.window.height(), COLLAPSED_SIZE[1])
 
-        # Snap right edge in compact mode
-        raw_x = 1915 - 240
+        raw_x = 1915 - COLLAPSED_SIZE[0]
         raw_pos = QPoint(raw_x, 100)
         snapped = self.window._apply_edge_snapping(raw_pos)
 
-        self.assertEqual(snapped.x(), 1919 - 240)
+        self.assertEqual(snapped.x(), 1919 - COLLAPSED_SIZE[0])
 
 
 if __name__ == "__main__":

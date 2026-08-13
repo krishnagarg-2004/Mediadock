@@ -16,14 +16,26 @@ class FramelessWindow(QWidget):
         self,
         parent: Optional[QWidget] = None,
         border_radius: float = 16.0,
-        bg_color: QColor = QColor("#1E1E2E"),
+        bg_color: QColor = QColor("#000000"),
+        allow_drag: bool = True,
     ) -> None:
         super().__init__(parent)
         self._border_radius = border_radius
         self._bg_color = bg_color
+        self._allow_drag = allow_drag
         self._drag_pos: Optional[QPoint] = None
 
         self._setup_window_flags()
+
+    @property
+    def allow_drag(self) -> bool:
+        """Return True if free mouse dragging is enabled for this window."""
+        return self._allow_drag
+
+    @allow_drag.setter
+    def allow_drag(self, enabled: bool) -> None:
+        """Enable or disable free mouse dragging for this window."""
+        self._allow_drag = enabled
 
     def _setup_window_flags(self) -> None:
         """Configure Qt window flags for frameless, always-on-top, and translucent display."""
@@ -65,16 +77,16 @@ class FramelessWindow(QWidget):
         return QPoint(snapped_x, snapped_y)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """Record the drag start position when left mouse button is pressed."""
-        if event.button() == Qt.MouseButton.LeftButton:
+        """Record the drag start position when left mouse button is pressed and drag is enabled."""
+        if self._allow_drag and event.button() == Qt.MouseButton.LeftButton:
             self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             event.accept()
         else:
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        """Move the window based on mouse drag delta with desktop edge snapping."""
-        if event.buttons() == Qt.MouseButton.LeftButton and self._drag_pos is not None:
+        """Move the window based on mouse drag delta if drag is enabled."""
+        if self._allow_drag and event.buttons() == Qt.MouseButton.LeftButton and self._drag_pos is not None:
             raw_pos = event.globalPosition().toPoint() - self._drag_pos
             snapped_pos = self._apply_edge_snapping(raw_pos)
             self.move(snapped_pos)
@@ -82,10 +94,9 @@ class FramelessWindow(QWidget):
         else:
             super().mouseMoveEvent(event)
 
-
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         """Reset drag tracking on left mouse button release."""
-        if event.button() == Qt.MouseButton.LeftButton:
+        if self._allow_drag and event.button() == Qt.MouseButton.LeftButton:
             self._drag_pos = None
             event.accept()
         else:
@@ -106,8 +117,8 @@ class FramelessWindow(QWidget):
 
         painter.fillPath(path, self._bg_color)
 
-        # Subtle 1px border stroke (Catppuccin Border #45475A)
+        # Pure Black 1px border stroke (#000000)
         from PySide6.QtGui import QPen
-        pen = QPen(QColor("#45475A"), 1)
+        pen = QPen(QColor("#000000"), 1)
         painter.setPen(pen)
         painter.drawPath(path)

@@ -13,6 +13,7 @@ graph TD
     subgraph "OS & Platform Layer"
         GSMTC["Windows GSMTC API (WinRT)"]
         COREAUDIO["Windows CoreAudio API (ctypes / IAudioEndpointVolume)"]
+        WASAPI["Windows WASAPI Loopback Capture (ctypes / IAudioClient)"]
         WINREG["Windows Registry (HKCU\\...\\Run)"]
         USER32["Win32 User32.dll (WM_HOTKEY)"]
     end
@@ -21,6 +22,8 @@ graph TD
         GSMTCProvider["GSMTCProvider\n(Background Asyncio Loop Thread)"]
         BaseProvider["BaseMediaProvider (Abstract Interface)"]
         VolumeProvider["BaseVolumeProvider / WindowsVolumeProvider\n(CoreAudio COM Integration)"]
+        AudioCapture["WASAPILoopbackCapture\n(ctypes COM Audio Thread)"]
+        AudioAnalyzer["AudioAnalyzer\n(Time-Domain Sub-Window RMS & Smoothing)"]
         MediaCore["MediaCore\n(Qt Signal Bridge & Coordinator)"]
         Models["Domain Models\n(TrackInfo, PlaybackStatus, MediaSessionInfo, VolumeState)"]
     end
@@ -33,7 +36,8 @@ graph TD
 
     subgraph "UI Layer (src/ui)"
         FramelessWindow["FramelessWindow\n(Edge Snapping & Dragging)"]
-        MainWindow["MainWindow\n(Full 360x140 / Compact 240x48 Modes)"]
+        MainWindow["MainWindow\n(Full 360x160 / Compact 180x40 Modes)"]
+        Visualizer["ReactiveVisualizerWidget\n(Real-Time Waveform Render)"]
         SystemTrayIcon["SystemTrayIcon\n(Tray Menu & Source Selector)"]
         SettingsDialog["SettingsDialog\n(Preferences UI)"]
         HotkeyMgr["GlobalHotkeyManager\n(Parsing, Rebinding & Rollback)"]
@@ -41,9 +45,14 @@ graph TD
 
     GSMTC --> GSMTCProvider
     COREAUDIO --> VolumeProvider
+    WASAPI --> AudioCapture
     GSMTCProvider -- Inherits --> BaseProvider
     GSMTCProvider -- Emits Callbacks --> MediaCore
     VolumeProvider -- Emits Callbacks --> MediaCore
+    AudioCapture -- Emits AudioFrame --> MediaCore
+    MediaCore -- Analyzes via --> AudioAnalyzer
+    MediaCore -- Emits audio_visualizer_updated --> MainWindow
+    MainWindow -- Updates Bar Heights --> Visualizer
     MediaCore -- Uses --> Models
 
     MainApp --> SettingsMgr
@@ -89,9 +98,10 @@ graph TD
 - **`FramelessWindow`** (`src/ui/frameless_window.py`): Custom frameless container widget extending `QWidget`.
   - **Desktop Edge Snapping**: Evaluates `_apply_edge_snapping(raw_pos)` during `mouseMoveEvent` dragging. Snaps within a 15 px threshold against `QScreen.availableGeometry()` (respecting taskbars across multi-monitor setups and DPI scaling).
 - **`MainWindow`** (`src/ui/main_window.py`): Primary floating dock widget extending `FramelessWindow`.
-  - **Full vs Compact Modes**: Toggles between Full Mode (360x140 px) and Compact Mode (240x48 px). Hides non-essential controls in compact view while keeping title elision and playback pathways identical.
-  - **Vector Icons**: Renders HiDPI vector speaker mute/unmute icons (`create_volume_icon_pixmap`) using `QPainter` and `QPen`.
-  - **Context Menu**: Right-click context menu offering checkable `"Compact Mode"` view action.
+  - **Dynamic Island State Machine**: Manages authoritative presentation states (`HIDDEN`, `COLLAPSED` [180x40 px], `EXPANDED` [360x160 px]).
+  - **Top-Center Screen Anchoring & Geometry Lifecycle**: `update_top_center_position()` computes pixel-perfect top-center QRect on primary monitor work area (`availableGeometry()`) with `TOP_OFFSET_PX` (12px) margin. Guarantees `window.center().x() == primary_screen.center().x()` during initial launch (`showEvent`), during 180ms `OutCubic` pop-in/pop-out geometry animations, and after arbitrary repeated expand/collapse cycles.
+  - **Capsule Metadata Alignment & Expand Direction**: Locks `_capsule_widget.setFixedSize(180, 40)` upon collapse animation completion in `_on_geom_anim_finished()`, preserving `capsule.center().y() == 20.0` and `metadata_group.center().y() == 20.0` (MIDDLE and CENTER alignment). Morphing during `COLLAPSED → EXPANDED` scales layout bounds symmetrically around center X = 960 while preserving `EXPANDED → COLLAPSED` collapse animation behavior intact.
+  - **Hover & Collapse Timer Lifecycle**: Mouse hover triggers pop-out expansion (`set_state(EXPANDED)`); mouse leave starts single-shot `QTimer` (`collapse_delay_ms`) returning to `COLLAPSED` state.
 - **`ElidedLabel`** (`src/ui/components.py`): Custom `QLabel` subclass that dynamically formats overflowing text using `QFontMetrics.elidedText(..., Qt.ElideRight, width)`.
 - **Theme System** (`src/ui/theme.py`): Catppuccin Mocha palette (`COLOR_BG_BASE = #1E1E2E`, `COLOR_TEXT_PRIMARY = #CDD6F4`, `COLOR_ACCENT_BLUE = #89B4FA`, etc.) with dynamic album-art dominant color extraction.
 
@@ -103,8 +113,8 @@ graph TD
 
 ### 2.5 Preferences & Storage Layer (`src/core/settings.py` & `src/ui/settings_dialog.py`)
 - **`SettingsManager`**: Qt-native wrapper around `QSettings("KrishnaOS", "MediaDock")`.
-  - Managed preferences: `close_to_tray`, `start_hidden`, `always_on_top`, `remember_position`, `compact_mode`, `hotkeys/show_hide` (default `"Ctrl+Alt+M"`), `hotkeys/play_pause` (default `"Ctrl+Alt+Space"`), `autostart`.
-- **`SettingsDialog`**: Preferences configuration dialog with hotkey text fields, rebind validation error label, and `chk_compact_mode` checkbox.
+  - Managed preferences: `close_to_tray`, `start_hidden`, `always_on_top`, `remember_position`, `compact_mode`, `hotkeys/show_hide` (default `"Ctrl+Alt+S"`), `hotkeys/play_pause` (default `"Ctrl+Alt+Space"`), `autostart`. Single source of truth with explicit `sync()` on save and tray exit.
+- **`SettingsDialog`**: Landscape preferences configuration dialog (`680x440` px) with `showEvent` control refresh, interactive shortcut recorders, `CollapseDelaySpinBox` (500-30000 ms), and fixed visual identity panel.
 
 ### 2.6 Operating System Integration (`src/utils/autostart.py` & `src/ui/hotkeys.py`)
 - **`AutostartManager`**: Windows Registry autostart under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.

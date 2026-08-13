@@ -123,10 +123,12 @@ class HotkeyNativeEventFilter(QAbstractNativeEventFilter):
 
     def nativeEventFilter(self, event_type: bytes, message: int) -> Tuple[bool, int]:
         """Intercept WM_HOTKEY (0x0312) messages and notify callback with hotkey ID."""
-        if IS_WINDOWS and message and (event_type == b"windows_generic_MSG" or event_type.startswith(b"windows_")):
+        if IS_WINDOWS and message is not None:
             try:
-                msg = MSG.from_address(int(message))
+                addr = int(message)
+                msg = MSG.from_address(addr)
                 if msg.message == WM_HOTKEY:
+                    logger.info("WM_HOTKEY intercepted in native event filter: ID=%d", msg.wParam)
                     hotkey_id = int(msg.wParam)
                     self._callback(hotkey_id)
                     return True, 0
@@ -146,13 +148,18 @@ class GlobalHotkeyManager(QObject):
         self._registered_ids: Set[int] = set()
         self._event_filter: Optional[HotkeyNativeEventFilter] = None
         self._is_started: bool = False
-        self._show_hide_seq: str = "Ctrl+Alt+M"
+        self._show_hide_seq: str = "Ctrl+Alt+S"
         self._play_pause_seq: str = "Ctrl+Alt+Space"
+        self._target_hwnd: Optional[int] = None
 
     @property
     def is_started(self) -> bool:
         """Return True if hotkey manager is currently active."""
         return self._is_started
+
+    def set_target_hwnd(self, hwnd: Optional[int]) -> None:
+        """Set target window HWND to receive Win32 WM_HOTKEY messages."""
+        self._target_hwnd = hwnd
 
     def is_registered(self, hotkey_id: int) -> bool:
         """Return True if specific hotkey ID is currently registered with Windows OS."""
@@ -168,13 +175,17 @@ class GlobalHotkeyManager(QObject):
 
     def start(
         self,
-        show_hide_seq: str = "Ctrl+Alt+M",
+        show_hide_seq: str = "Ctrl+Alt+S",
         play_pause_seq: str = "Ctrl+Alt+Space",
+        target_hwnd: Optional[int] = None,
     ) -> bool:
         """Register global hotkeys and install native event filter into QApplication."""
         if not IS_WINDOWS:
             logger.info("Global hotkeys disabled: Non-Windows platform (%s).", sys.platform)
             return False
+
+        if target_hwnd is not None:
+            self._target_hwnd = target_hwnd
 
         if self._is_started:
             return True
@@ -286,8 +297,9 @@ class GlobalHotkeyManager(QObject):
         if user32 is None:
             return False
 
+        target = ctypes.wintypes.HWND(self._target_hwnd) if self._target_hwnd else None
         try:
-            res = user32.RegisterHotKey(None, hotkey_id, modifiers, vk_code)
+            res = user32.RegisterHotKey(target, hotkey_id, modifiers, vk_code)
             if res != 0:
                 self._registered_ids.add(hotkey_id)
                 logger.info("Successfully registered global hotkey: %s", label)
@@ -307,9 +319,10 @@ class GlobalHotkeyManager(QObject):
         """Helper to unregister all registered Win32 hotkey IDs."""
         user32 = getattr(getattr(ctypes, "windll", None), "user32", None)
         if user32 is not None and self._registered_ids:
+            target = ctypes.wintypes.HWND(self._target_hwnd) if self._target_hwnd else None
             for hotkey_id in list(self._registered_ids):
                 try:
-                    user32.UnregisterHotKey(None, hotkey_id)
+                    user32.UnregisterHotKey(target, hotkey_id)
                 except Exception as e:
                     logger.error("Error unregistering hotkey ID %d: %s", hotkey_id, e)
             self._registered_ids.clear()

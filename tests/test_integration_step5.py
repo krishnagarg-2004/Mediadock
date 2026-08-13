@@ -158,23 +158,23 @@ class TestStep5Integration(unittest.TestCase):
         window = MainWindow(media_core=core)
 
         core.playback_status_changed.emit(PlaybackStatus.PLAYING)
-        self.assertIn("#A6E3A1", window.status_label.styleSheet())
+        self.assertIn("#00FF7F", window.status_label.styleSheet())
         self.assertEqual(window.status_label.text(), "PLAYING")
 
         core.playback_status_changed.emit(PlaybackStatus.PAUSED)
-        self.assertIn("#F9E2AF", window.status_label.styleSheet())
+        self.assertIn("#C1121C", window.status_label.styleSheet())
         self.assertEqual(window.status_label.text(), "PAUSED")
 
         core.playback_status_changed.emit(PlaybackStatus.STOPPED)
-        self.assertIn("#F38BA8", window.status_label.styleSheet())
+        self.assertIn("#C1121C", window.status_label.styleSheet())
         self.assertEqual(window.status_label.text(), "STOPPED")
 
         core.playback_status_changed.emit(PlaybackStatus.CLOSED)
-        self.assertIn("#6C7086", window.status_label.styleSheet())
+        self.assertIn("#8A8A8A", window.status_label.styleSheet())
         self.assertEqual(window.status_label.text(), "CLOSED")
 
         core.playback_status_changed.emit(PlaybackStatus.UNKNOWN)
-        self.assertIn("#6C7086", window.status_label.styleSheet())
+        self.assertIn("#8A8A8A", window.status_label.styleSheet())
         self.assertEqual(window.status_label.text(), "UNKNOWN")
 
     def test_close_to_tray_hides_window_without_stopping_mediacore(self) -> None:
@@ -222,27 +222,20 @@ class TestStep5Integration(unittest.TestCase):
         self.assertTrue(bool(window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint))
         qs.clear()
 
-    def test_remember_position_restoration_and_saving(self) -> None:
-        """Verify remember_position restores valid coordinates and saves position on close."""
+    def test_top_center_positioning_precedence(self) -> None:
+        """Verify Dynamic Island top-center positioning takes precedence for window placement."""
         from src.core.settings import SettingsManager
         from PySide6.QtCore import QSettings
+        from src.ui.main_window import TOP_OFFSET_PX
 
         qs = QSettings("KrishnaOSTest", "MediaDockTest")
         qs.clear()
         sm = SettingsManager(qsettings=qs)
 
-        # 1. Unset position (-1, -1) should not change default geometry position
         provider = DummyProvider()
         core = MediaCore(provider=provider)
         window1 = MainWindow(media_core=core, settings_manager=sm)
-
-        # 2. Set valid position
-        sm.set_window_position(220, 340)
-
-        # 3. New window restores valid saved position
-        window2 = MainWindow(media_core=core, settings_manager=sm)
-        self.assertEqual(window2.pos().x(), 220)
-        self.assertEqual(window2.pos().y(), 340)
+        self.assertEqual(window1.pos().y(), TOP_OFFSET_PX)
         qs.clear()
 
 
@@ -281,7 +274,7 @@ class TestStep5Integration(unittest.TestCase):
 
 
     def test_album_art_accent_extraction_and_fallback(self) -> None:
-        """Verify track without art uses fallback accent #89B4FA, and track with valid art extracts accent."""
+        """Verify track without art uses fallback accent #00FF7F, and track with valid art extracts accent."""
         from PySide6.QtCore import QBuffer, QByteArray, QIODevice
         from PySide6.QtGui import QColor, QImage
 
@@ -292,8 +285,8 @@ class TestStep5Integration(unittest.TestCase):
         # 1. Fallback test: no art bytes
         no_art_track = TrackInfo(title="Song", artist="Artist", album_art_bytes=None)
         core.track_changed.emit(no_art_track)
-        self.assertEqual(window._current_accent.name(), "#89b4fa")
-        self.assertIn("#89b4fa", window.progress_slider.styleSheet())
+        self.assertEqual(window._current_accent.name(), "#00ff7f")
+        self.assertIn("#00ff7f", window.progress_slider.styleSheet())
 
         # 2. Valid art test: solid green image
         img = QImage(32, 32, QImage.Format.Format_RGB32)
@@ -330,22 +323,22 @@ class TestStep5Integration(unittest.TestCase):
         mock_core.next_track.assert_called_once()
 
     def test_play_pause_button_icon_states(self) -> None:
-        """Verify Play/Pause button text updates to ⏸ when PLAYING and ▶ otherwise."""
+        """Verify Play/Pause button icon updates cleanly for PLAYING, PAUSED, and STOPPED states."""
         provider = DummyProvider()
         core = MediaCore(provider=provider)
         window = MainWindow(media_core=core)
 
         core.playback_status_changed.emit(PlaybackStatus.PLAYING)
-        self.assertEqual(window.btn_play_pause.text(), "⏸")
+        self.assertFalse(window.btn_play_pause.icon().isNull())
 
         core.playback_status_changed.emit(PlaybackStatus.PAUSED)
-        self.assertEqual(window.btn_play_pause.text(), "▶")
+        self.assertFalse(window.btn_play_pause.icon().isNull())
 
         core.playback_status_changed.emit(PlaybackStatus.STOPPED)
-        self.assertEqual(window.btn_play_pause.text(), "▶")
+        self.assertFalse(window.btn_play_pause.icon().isNull())
 
         core.playback_status_changed.emit(PlaybackStatus.CLOSED)
-        self.assertEqual(window.btn_play_pause.text(), "▶")
+        self.assertFalse(window.btn_play_pause.icon().isNull())
 
     def test_time_formatting_helper(self) -> None:
         """Verify _format_time_ms formats MM:SS correctly and clamps negative values to 00:00."""

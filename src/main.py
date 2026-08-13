@@ -46,49 +46,43 @@ def main() -> int:
     def open_settings_dialog() -> None:
         nonlocal settings_dialog
         if settings_dialog is None or not settings_dialog.isVisible():
-            settings_dialog = SettingsDialog(
-                settings_manager=settings_manager,
-                hotkey_manager=hotkey_manager,
-                parent=window,
-            )
+            if settings_dialog is None:
+                settings_dialog = SettingsDialog(
+                    settings_manager=settings_manager,
+                    hotkey_manager=hotkey_manager,
+                    parent=window,
+                )
+            settings_dialog.load_settings()
             settings_dialog.show()
         settings_dialog.raise_()
         settings_dialog.activateWindow()
 
     # Connect system tray interaction signals
     def toggle_window_visibility() -> None:
-        if window.isVisible() and not window.isMinimized():
-            window.hide()
-            tray_icon.update_menu_state(False)
+        from src.ui.main_window import DynamicIslandState
+        if window.island_state == DynamicIslandState.HIDDEN:
+            if settings_manager.get_dynamic_island_enabled():
+                window.set_state(DynamicIslandState.COLLAPSED)
+                tray_icon.update_menu_state(True)
         else:
-            window.show()
-            if window.isMinimized():
-                window.showNormal()
-            window.raise_()
-            window.activateWindow()
-            tray_icon.update_menu_state(True)
+            window.set_state(DynamicIslandState.HIDDEN)
+            tray_icon.update_menu_state(False)
 
     def show_and_front_window() -> None:
-        window.show()
-        if window.isMinimized():
-            window.showNormal()
-        window.raise_()
-        window.activateWindow()
+        from src.ui.main_window import DynamicIslandState
+        if window.island_state == DynamicIslandState.HIDDEN:
+            window.set_state(DynamicIslandState.COLLAPSED)
         tray_icon.update_menu_state(True)
 
+    def quit_application() -> None:
+        settings_manager.sync()
+        window.force_close()
+        app.quit()
+
     tray_icon.show_hide_requested.connect(toggle_window_visibility)
-    tray_icon.compact_mode_requested.connect(window.set_compact_mode)
     tray_icon.show_requested.connect(show_and_front_window)
     tray_icon.settings_requested.connect(open_settings_dialog)
-    tray_icon.exit_requested.connect(app.quit)
-
-    # Sync tray compact mode state with settings manager
-    tray_icon.set_compact_mode_checked(settings_manager.get_compact_mode())
-    settings_manager.settings_changed.connect(
-        lambda key, val: tray_icon.set_compact_mode_checked(bool(val))
-        if key == "window/compact_mode"
-        else None
-    )
+    tray_icon.exit_requested.connect(quit_application)
 
     # Connect single instance activation signal
     single_instance_guard.activation_requested.connect(show_and_front_window)
@@ -102,25 +96,31 @@ def main() -> int:
     pp_hk = settings_manager.get_hotkey_play_pause()
 
     media_core.start()
-    hotkey_manager.start(show_hide_seq=sh_hk, play_pause_seq=pp_hk)
+    hotkey_manager.start(
+        show_hide_seq=sh_hk,
+        play_pause_seq=pp_hk,
+        target_hwnd=int(window.winId()),
+    )
 
-
-    # Ensure clean provider, hotkey, and tray icon shutdown on application exit
+    # Ensure clean provider, hotkey, settings sync, and tray icon shutdown on application exit
+    app.aboutToQuit.connect(settings_manager.sync)
     app.aboutToQuit.connect(hotkey_manager.stop)
     app.aboutToQuit.connect(media_core.stop)
     app.aboutToQuit.connect(tray_icon.hide_tray_icon)
 
     # Apply start_hidden setting or command-line flags (--minimized / --start-hidden)
+    from src.ui.main_window import DynamicIslandState
     start_hidden = (
         "--minimized" in sys.argv
         or "--start-hidden" in sys.argv
         or settings_manager.get_start_hidden()
+        or not settings_manager.get_dynamic_island_enabled()
     )
-    if start_hidden:
-        window.hide()
+    if start_hidden or not media_core.is_session_available():
+        window.set_state(DynamicIslandState.HIDDEN)
         tray_icon.update_menu_state(False)
     else:
-        window.show()
+        window.set_state(DynamicIslandState.COLLAPSED)
         tray_icon.update_menu_state(True)
 
     return app.exec()

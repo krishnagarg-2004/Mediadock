@@ -40,11 +40,10 @@ class SettingsManager(QObject):
         "general/start_hidden": False,
         "general/autostart_windows": False,
         "window/always_on_top": True,
-        "window/remember_position": True,
-        "window/pos_x": -1,
-        "window/pos_y": -1,
         "window/compact_mode": False,
-        "hotkeys/show_hide": "Ctrl+Alt+M",
+        "dynamic_island/enabled": True,
+        "dynamic_island/collapse_delay_ms": 3500,
+        "hotkeys/show_hide": "Ctrl+Alt+S",
         "hotkeys/play_pause": "Ctrl+Alt+Space",
     }
 
@@ -109,14 +108,12 @@ class SettingsManager(QObject):
 
     def set_autostart_windows(self, enabled: bool) -> bool:
         """Set whether autostart with Windows is enabled and synchronize with Windows Registry."""
-        success = False
         if enabled:
             success = AutostartManager.enable_autostart()
         else:
             success = AutostartManager.disable_autostart()
 
-        if success:
-            self.set("general/autostart_windows", bool(enabled))
+        self.set("general/autostart_windows", bool(enabled))
         return success
 
     def get_always_on_top(self) -> bool:
@@ -127,32 +124,34 @@ class SettingsManager(QObject):
         """Set whether main window stays always on top."""
         self.set("window/always_on_top", bool(on_top))
 
-    def get_remember_position(self) -> bool:
-        """Return whether window screen position is saved and restored."""
-        return self.get("window/remember_position")
-
-    def set_remember_position(self, remember: bool) -> None:
-        """Set whether window screen position is saved and restored."""
-        self.set("window/remember_position", bool(remember))
-
-    def get_window_position(self) -> Tuple[int, int]:
-        """Return saved (pos_x, pos_y) coordinate tuple (-1, -1 if unset)."""
-        x = self.get("window/pos_x")
-        y = self.get("window/pos_y")
-        return (x, y)
-
-    def set_window_position(self, x: int, y: int) -> None:
-        """Save window screen position (x, y) coordinates."""
-        self.set("window/pos_x", int(x))
-        self.set("window/pos_y", int(y))
-
     def get_compact_mode(self) -> bool:
-        """Return whether window is currently in compact view mode."""
+        """Deprecated legacy accessor. Kept for backward compatibility."""
         return self.get("window/compact_mode")
 
     def set_compact_mode(self, enabled: bool) -> None:
-        """Set whether window is in compact view mode."""
+        """Deprecated legacy accessor. Kept for backward compatibility."""
         self.set("window/compact_mode", bool(enabled))
+
+    def get_dynamic_island_enabled(self) -> bool:
+        """Return whether Dynamic Island desktop overlay is enabled."""
+        return self.get("dynamic_island/enabled")
+
+    def set_dynamic_island_enabled(self, enabled: bool) -> None:
+        """Set whether Dynamic Island desktop overlay is enabled."""
+        self.set("dynamic_island/enabled", bool(enabled))
+
+    def get_collapse_delay_ms(self) -> int:
+        """Return auto-collapse inactivity delay in milliseconds (default 3500 ms)."""
+        return self.get("dynamic_island/collapse_delay_ms")
+
+    def set_collapse_delay_ms(self, delay_ms: int) -> None:
+        """Set auto-collapse inactivity delay in milliseconds (clamped to 500-30000 ms)."""
+        try:
+            val = int(delay_ms)
+        except (ValueError, TypeError):
+            val = 3500
+        val = max(500, min(30000, val))
+        self.set("dynamic_island/collapse_delay_ms", val)
 
 
     def get_hotkey_show_hide(self) -> str:
@@ -171,6 +170,11 @@ class SettingsManager(QObject):
         """Set global hotkey sequence string for Toggle Play/Pause."""
         self.set("hotkeys/play_pause", str(sequence))
 
+    def sync(self) -> None:
+        """Synchronize in-memory settings to persistent QSettings storage."""
+        self._settings.sync()
+
     def clear(self) -> None:
         """Reset all stored settings in the QSettings store."""
         self._settings.clear()
+        self.sync()

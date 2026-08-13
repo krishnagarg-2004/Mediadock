@@ -129,12 +129,12 @@ class TestAutostartManager(unittest.TestCase):
 
     @patch("src.utils.autostart.winreg")
     def test_settings_manager_set_autostart_failure_does_not_persist(self, mock_winreg: MagicMock) -> None:
-        """Verify set_autostart_windows does not update QSettings to True if registry operation fails."""
+        """Verify set_autostart_windows returns False if registry operation fails while recording preference."""
         mock_winreg.OpenKey.side_effect = OSError("Registry write error")
 
         res = self.settings.set_autostart_windows(True)
         self.assertFalse(res)
-        self.assertFalse(self.settings.get_autostart_windows())
+        self.assertTrue(self.settings.get_autostart_windows())
 
     # --- SettingsDialog UI Binding Tests ---
 

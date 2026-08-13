@@ -87,7 +87,7 @@ class AutostartManager:
                 winreg.HKEY_CURRENT_USER,
                 REG_KEY_PATH,
                 0,
-                winreg.KEY_ALL_ACCESS,
+                winreg.KEY_SET_VALUE,
             ) as key:
                 winreg.DeleteValue(key, APP_NAME)
             return True

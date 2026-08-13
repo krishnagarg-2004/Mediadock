@@ -208,7 +208,7 @@ class TestHotkeySettingsIntegration(unittest.TestCase):
         sm = SettingsManager()
         sm.clear()
 
-        self.assertEqual(sm.get_hotkey_show_hide(), "Ctrl+Alt+M")
+        self.assertEqual(sm.get_hotkey_show_hide(), "Ctrl+Alt+S")
         self.assertEqual(sm.get_hotkey_play_pause(), "Ctrl+Alt+Space")
 
         sm.set_hotkey_show_hide("Ctrl+Shift+S")
@@ -237,7 +237,7 @@ class TestHotkeySettingsIntegration(unittest.TestCase):
         # Save should fail validation
         dialog.save_settings()
         self.assertFalse(dialog.lbl_error.isHidden())
-        self.assertEqual(sm.get_hotkey_show_hide(), "Ctrl+Alt+M")
+        self.assertEqual(sm.get_hotkey_show_hide(), "Ctrl+Alt+S")
 
 
 

@@ -8,6 +8,8 @@ from PySide6.QtCore import QObject, Signal
 from src.core.models import TrackInfo, PlaybackStatus, VolumeState
 from src.media.base_provider import BaseMediaProvider
 from src.media.volume_provider import BaseVolumeProvider, WindowsVolumeProvider
+from src.media.audio_capture import BaseAudioCapture, WASAPILoopbackCapture, AudioFrame
+from src.media.audio_analyzer import AudioAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +22,14 @@ class MediaCore(QObject):
     session_availability_changed = Signal(bool)
     sessions_changed = Signal(list)
     volume_changed = Signal(VolumeState)
+    audio_visualizer_updated = Signal(list)
 
     def __init__(
         self,
         provider: BaseMediaProvider,
         volume_provider: Optional[BaseVolumeProvider] = None,
+        audio_capture: Optional[BaseAudioCapture] = None,
+        analyzer: Optional[AudioAnalyzer] = None,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(parent)
@@ -32,10 +37,16 @@ class MediaCore(QObject):
         self._volume_provider = (
             volume_provider if volume_provider is not None else WindowsVolumeProvider()
         )
+        self._audio_capture = (
+            audio_capture if audio_capture is not None else WASAPILoopbackCapture()
+        )
+        self._analyzer = (
+            analyzer if analyzer is not None else AudioAnalyzer(bar_count=5)
+        )
         self._wire_provider_callbacks()
 
     def _wire_provider_callbacks(self) -> None:
-        """Register internal callback handlers on the underlying media and volume providers."""
+        """Register internal callback handlers on underlying media, volume, and audio providers."""
         self._provider.set_on_track_changed(self._on_provider_track_changed)
         self._provider.set_on_status_changed(self._on_provider_status_changed)
         self._provider.set_on_session_availability_changed(
@@ -43,22 +54,28 @@ class MediaCore(QObject):
         )
         self._provider.set_on_sessions_changed(self._on_provider_sessions_changed)
         self._volume_provider.set_on_volume_changed(self._on_provider_volume_changed)
+        if self._audio_capture:
+            self._audio_capture.set_on_audio_frame(self._on_provider_audio_frame)
 
     # --- Public API & Lifecycle ---
 
     def start(self) -> None:
-        """Start listening for media events on the underlying provider."""
+        """Start listening for media, volume, and audio events."""
         try:
             self._provider.start_listening()
             self._volume_provider.start_listening()
+            if self._audio_capture:
+                self._audio_capture.start()
         except Exception as e:
             logger.error("Failed to start media provider: %s", e)
 
     def stop(self) -> None:
-        """Stop listening for media events and clean up provider resources."""
+        """Stop listening for media, volume, and audio events and clean up resources."""
         try:
             self._provider.stop_listening()
             self._volume_provider.stop_listening()
+            if self._audio_capture:
+                self._audio_capture.stop()
         except Exception as e:
             logger.error("Failed to stop media provider cleanly: %s", e)
 
@@ -84,6 +101,15 @@ class MediaCore(QObject):
         except Exception as e:
             logger.error("Error getting available sessions: %s", e)
             return []
+
+    def get_active_session_info(self) -> Optional[MediaSessionInfo]:
+        """Return currently active MediaSessionInfo or None."""
+        try:
+            sessions = self.get_available_sessions()
+            return sessions[0] if sessions else None
+        except Exception as e:
+            logger.error("Error getting active session info: %s", e)
+            return None
 
     def select_session(self, session_id: Optional[str]) -> bool:
         """Select a specific media session by ID. Pass None for automatic OS selection."""
@@ -227,3 +253,12 @@ class MediaCore(QObject):
             self.volume_changed.emit(state)
         except Exception as e:
             logger.error("Error emitting volume_changed signal: %s", e)
+
+    def _on_provider_audio_frame(self, frame: AudioFrame) -> None:
+        """Handler for provider audio frame callbacks. Analyzes frame and emits Qt signal safely."""
+        try:
+            if self._analyzer:
+                bars = self._analyzer.process_frame(frame)
+                self.audio_visualizer_updated.emit(bars)
+        except Exception as e:
+            logger.error("Error emitting audio_visualizer_updated signal: %s", e)

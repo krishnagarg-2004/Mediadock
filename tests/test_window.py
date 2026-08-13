@@ -34,11 +34,13 @@ class TestMediaDockWindow(unittest.TestCase):
         self.assertTrue(window.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground))
 
     def test_main_window_properties(self) -> None:
-        """Verify MainWindow default properties (title, dimensions)."""
+        """Verify MainWindow default properties and EXPANDED dimensions."""
+        from src.ui.main_window import DynamicIslandState, EXPANDED_SIZE
         window = MainWindow()
         self.assertEqual(window.windowTitle(), "MediaDock")
-        self.assertEqual(window.width(), 360)
-        self.assertEqual(window.height(), 140)
+        window.set_state(DynamicIslandState.EXPANDED)
+        self.assertEqual(window.width(), EXPANDED_SIZE[0])
+        self.assertEqual(window.height(), EXPANDED_SIZE[1])
 
     def test_artwork_label_dimensions(self) -> None:
         """Verify art_label fixed dimensions (72x72) and default pixmap match."""
@@ -58,7 +60,6 @@ class TestMediaDockWindow(unittest.TestCase):
         mock_settings.get_close_to_tray.return_value = True
         mock_settings.get_always_on_top.return_value = True
         mock_settings.get_compact_mode.return_value = False
-        mock_settings.get_window_position.return_value = (100, 100)
 
         window = MainWindow(settings_manager=mock_settings)
         window.show()
@@ -79,7 +80,6 @@ class TestMediaDockWindow(unittest.TestCase):
         mock_settings.get_close_to_tray.return_value = False
         mock_settings.get_always_on_top.return_value = True
         mock_settings.get_compact_mode.return_value = False
-        mock_settings.get_window_position.return_value = (100, 100)
 
         window = MainWindow(settings_manager=mock_settings)
 

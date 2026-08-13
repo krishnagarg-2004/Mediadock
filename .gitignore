@@ -19,3 +19,6 @@ Thumbs.db
 build/
 dist/
 *.manifest
+
+# Temporary diagnostic files
+scratch/

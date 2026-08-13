@@ -32,7 +32,7 @@ class TestUITheme(unittest.TestCase):
         """Verify color tokens are valid QColor objects."""
         self.assertTrue(COLOR_BG_BASE.isValid())
         self.assertTrue(COLOR_ACCENT_BLUE.isValid())
-        self.assertEqual(COLOR_BG_BASE.name(), "#1e1e2e")
+        self.assertEqual(COLOR_BG_BASE.name(), "#000000")
 
     def test_extract_dominant_color_none_returns_fallback(self) -> None:
         """Verify None image bytes returns default fallback accent color."""
@@ -67,22 +67,22 @@ class TestUITheme(unittest.TestCase):
         """Verify get_status_badge_style returns correct tuple format."""
         playing_text, text_hex, bg_hex = get_status_badge_style(PlaybackStatus.PLAYING)
         self.assertEqual(playing_text, "PLAYING")
-        self.assertEqual(text_hex, "#A6E3A1")
-        self.assertEqual(bg_hex, "#1E2E28")
+        self.assertEqual(text_hex, "#00FF7F")
+        self.assertEqual(bg_hex, "#0A2919")
 
         paused_text, p_text_hex, p_bg_hex = get_status_badge_style(PlaybackStatus.PAUSED)
         self.assertEqual(paused_text, "PAUSED")
-        self.assertEqual(p_text_hex, "#F9E2AF")
+        self.assertEqual(p_text_hex, "#C1121C")
 
     def test_stylesheet_generators(self) -> None:
         """Verify get_button_stylesheet and get_slider_stylesheet produce valid QSS strings."""
         btn_qss = get_button_stylesheet()
         self.assertIn("QPushButton", btn_qss)
-        self.assertIn("#313244", btn_qss)
+        self.assertIn("#222222", btn_qss)
 
-        slider_qss = get_slider_stylesheet(QColor("#A6E3A1"))
+        slider_qss = get_slider_stylesheet(QColor("#00FF7F"))
         self.assertIn("QSlider::groove:horizontal", slider_qss)
-        self.assertIn("#a6e3a1", slider_qss)
+        self.assertIn("#00ff7f", slider_qss)
 
 
 if __name__ == "__main__":

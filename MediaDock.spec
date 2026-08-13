@@ -12,6 +12,7 @@ hidden_imports = [
     "winrt.windows.media.control",
     "winrt.windows.storage.streams",
     "winrt.windows.foundation",
+    "winrt.windows.foundation.collections",
     "winrt.system",
 ]
 
@@ -19,7 +20,7 @@ a = Analysis(
     ["src/main.py"],
     pathex=["."],
     binaries=[],
-    datas=[],
+    datas=[("assets", "assets")],
     hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},
