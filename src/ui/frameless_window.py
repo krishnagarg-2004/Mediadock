@@ -103,17 +103,20 @@ class FramelessWindow(QWidget):
             super().mouseReleaseEvent(event)
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        """Paint an anti-aliased rounded rectangle background and subtle border stroke."""
+        """Paint an anti-aliased notch shape (flat top edge against screen bezel, rounded bottom corners) and subtle border."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         rect = self.rect().adjusted(0, 0, -1, -1)
+        r = float(self._border_radius)
         path = QPainterPath()
-        path.addRoundedRect(
-            rect,
-            self._border_radius,
-            self._border_radius,
-        )
+        path.moveTo(rect.left(), rect.top())
+        path.lineTo(rect.right(), rect.top())
+        path.lineTo(rect.right(), rect.bottom() - r)
+        path.quadTo(rect.right(), rect.bottom(), rect.right() - r, rect.bottom())
+        path.lineTo(rect.left() + r, rect.bottom())
+        path.quadTo(rect.left(), rect.bottom(), rect.left(), rect.bottom() - r)
+        path.closeSubpath()
 
         painter.fillPath(path, self._bg_color)
 

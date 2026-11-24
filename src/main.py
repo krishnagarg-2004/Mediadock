@@ -32,7 +32,7 @@ def main() -> int:
     # Instantiate settings, media infrastructure, application coordinator, and hotkey manager
     settings_manager = SettingsManager()
     provider = GSMTCProvider()
-    media_core = MediaCore(provider=provider)
+    media_core = MediaCore(provider=provider, settings_manager=settings_manager)
     hotkey_manager = GlobalHotkeyManager()
 
     # Instantiate GUI window and SystemTrayIcon
@@ -50,6 +50,7 @@ def main() -> int:
                 settings_dialog = SettingsDialog(
                     settings_manager=settings_manager,
                     hotkey_manager=hotkey_manager,
+                    media_core=media_core,
                     parent=window,
                 )
             settings_dialog.load_settings()

@@ -1,6 +1,7 @@
-from typing import Optional, Any
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QKeyEvent, QColor
+import math
+from typing import Optional, Any, Dict, List
+from PySide6.QtCore import Qt, Signal, QUrl
+from PySide6.QtGui import QFont, QKeyEvent, QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -11,12 +12,16 @@ from PySide6.QtWidgets import (
     QWidget,
     QFrame,
     QSpinBox,
+    QSlider,
+    QComboBox,
+    QScrollArea,
     QListWidget,
     QListWidgetItem,
     QStackedWidget,
 )
 
 from src.core.settings import SettingsManager
+from src.media.equalizer_apo import EqualizerAPOManager, EQUALIZER_APO_DOWNLOAD_URL
 from src.ui.theme import (
     COLOR_BG_BASE,
     COLOR_BG_MANTLE,
@@ -28,6 +33,15 @@ from src.ui.theme import (
     COLOR_ACCENT_GREEN,
     get_button_stylesheet,
 )
+
+EQ_PRESETS: Dict[str, List[float]] = {
+    "Flat": [0.0, 0.0, 0.0, 0.0, 0.0],
+    "Bass Boost": [5.0, 3.5, 0.0, 0.0, 0.0],
+    "Vocal Clarity": [-2.0, 1.0, 4.0, 3.0, 1.0],
+    "Electronic": [4.5, 3.0, -1.0, 2.5, 4.5],
+    "Rock": [4.0, 2.0, -0.5, 2.0, 3.5],
+    "Acoustic": [2.5, 1.0, 2.0, 2.5, 3.0],
+}
 
 
 class ShortcutRecorderWidget(QWidget):
@@ -353,11 +367,15 @@ class SettingsDialog(QDialog):
         self,
         settings_manager: SettingsManager,
         hotkey_manager: Optional[Any] = None,
+        media_core: Optional[Any] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self._settings_manager = settings_manager
         self._hotkey_manager = hotkey_manager
+        self._media_core = media_core
+        self._apo_manager = EqualizerAPOManager()
+        self._is_updating_ui = False
 
         self.setWindowTitle("MediaDock Preferences")
         self.setFixedSize(680, 440)
@@ -473,8 +491,8 @@ class SettingsDialog(QDialog):
         self.lbl_always_on_top_desc = QLabel("Keep window floating above other application windows", page_prefs)
         self.lbl_always_on_top_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;")
 
-        self.chk_dynamic_island = QCheckBox("Enable Dynamic Island", page_prefs)
-        self.lbl_dynamic_island_desc = QLabel("Anchors ambient capsule to top-center of primary screen", page_prefs)
+        self.chk_dynamic_island = QCheckBox("Enable Dynamic Island (Top Notch)", page_prefs)
+        self.lbl_dynamic_island_desc = QLabel("Anchors ambient notch screen to top-center of primary screen", page_prefs)
         self.lbl_dynamic_island_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;")
 
         layout_prefs.addWidget(self.chk_close_to_tray)
@@ -564,7 +582,7 @@ class SettingsDialog(QDialog):
         layout_di.addLayout(delay_layout)
 
         lbl_delay_desc = QLabel(
-            "Time in milliseconds before the expanded media card auto-collapses to the capsule upon mouse leave.", page_di
+            "Time in milliseconds before the expanded media card auto-collapses back to the notch upon mouse leave.", page_di
         )
         lbl_delay_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px;")
         lbl_delay_desc.setWordWrap(True)
@@ -625,27 +643,264 @@ class SettingsDialog(QDialog):
 
         self.stacked_widget.addWidget(page_app)
 
-        # Page 4: Audio Baseline
+        # Page 4: Audio & Equalizer Settings
         page_aud = QWidget()
-        layout_aud = QVBoxLayout(page_aud)
-        layout_aud.setContentsMargins(0, 0, 0, 0)
-        layout_aud.setSpacing(10)
+        layout_aud_root = QVBoxLayout(page_aud)
+        layout_aud_root.setContentsMargins(0, 0, 0, 0)
+        layout_aud_root.setSpacing(6)
 
-        lbl_aud_title = QLabel("Audio Settings", page_aud)
+        lbl_aud_title = QLabel("Audio & Equalizer", page_aud)
         lbl_aud_title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         lbl_aud_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()};")
-        layout_aud.addWidget(lbl_aud_title)
+        layout_aud_root.addWidget(lbl_aud_title)
+
+        lbl_aud_sub = QLabel("Configure system-wide audio boost, tone filters, and 5-band graphic equalizer.", page_aud)
+        lbl_aud_sub.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px;")
+        layout_aud_root.addWidget(lbl_aud_sub)
 
         line_aud = QFrame(page_aud)
         line_aud.setFrameShape(QFrame.Shape.HLine)
         line_aud.setFrameShadow(QFrame.Shadow.Sunken)
         line_aud.setStyleSheet(f"color: {COLOR_BORDER.name()};")
-        layout_aud.addWidget(line_aud)
+        layout_aud_root.addWidget(line_aud)
 
-        lbl_aud_info = QLabel("Audio provider and master volume control integration.", page_aud)
-        lbl_aud_info.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px;")
-        layout_aud.addWidget(lbl_aud_info)
-        layout_aud.addStretch()
+        # Scroll Area for dense audio controls
+        scroll_aud = QScrollArea(page_aud)
+        scroll_aud.setWidgetResizable(True)
+        scroll_aud.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_aud.setStyleSheet("background: transparent; border: none;")
+
+        aud_container = QWidget()
+        layout_aud = QVBoxLayout(aud_container)
+        layout_aud.setContentsMargins(0, 4, 12, 4)
+        layout_aud.setSpacing(10)
+
+        # 1. Equalizer APO Status Card
+        card_apo = QFrame(aud_container)
+        card_apo.setStyleSheet(
+            f"background-color: {COLOR_BG_MANTLE.name()}; border: 1px solid {COLOR_BORDER.name()}; border-radius: 6px; padding: 4px;"
+        )
+        layout_card = QHBoxLayout(card_apo)
+        layout_card.setContentsMargins(8, 6, 8, 6)
+        layout_card.setSpacing(10)
+
+        is_apo_installed = self._apo_manager.is_installed()
+        if is_apo_installed:
+            lbl_apo_status = QLabel("● System-wide audio boost & EQ active (Equalizer APO)", card_apo)
+            lbl_apo_status.setStyleSheet("color: #00FF7F; font-size: 11px; font-weight: bold;")
+            layout_card.addWidget(lbl_apo_status, 1)
+        else:
+            lbl_apo_status = QLabel("○ Equalizer APO not detected. Visualizer EQ active.", card_apo)
+            lbl_apo_status.setStyleSheet("color: #E0AF68; font-size: 11px;")
+            btn_install_apo = QPushButton("Install Driver...", card_apo)
+            btn_install_apo.setFixedHeight(24)
+            btn_install_apo.setStyleSheet(get_button_stylesheet())
+            btn_install_apo.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(EQUALIZER_APO_DOWNLOAD_URL)))
+            layout_card.addWidget(lbl_apo_status, 1)
+            layout_card.addWidget(btn_install_apo)
+
+        self.chk_eq_enabled = QCheckBox("Enable EQ & Enhancements", card_apo)
+        self.chk_eq_enabled.stateChanged.connect(self._on_audio_control_changed)
+        layout_card.addWidget(self.chk_eq_enabled)
+        layout_aud.addWidget(card_apo)
+
+        slider_qss = (
+            "QSlider::groove:horizontal { height: 4px; background: #2A2A2A; border-radius: 2px; }"
+            "QSlider::sub-page:horizontal { background: #00FF7F; border-radius: 2px; }"
+            "QSlider::handle:horizontal { background: #FFFFFF; border: 1px solid #141414; width: 12px; margin-top: -4px; margin-bottom: -4px; border-radius: 6px; }"
+        )
+
+        # 2. Audio Boost (Preamp) Section
+        boost_box = QWidget(aud_container)
+        boost_l = QVBoxLayout(boost_box)
+        boost_l.setContentsMargins(0, 0, 0, 0)
+        boost_l.setSpacing(2)
+
+        boost_hdr = QHBoxLayout()
+        lbl_preamp_title = QLabel("Audio Boost (Preamp):", boost_box)
+        lbl_preamp_title.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        lbl_preamp_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()};")
+        self.lbl_preamp_val = QLabel("+0.0 dB (100%)", boost_box)
+        self.lbl_preamp_val.setStyleSheet("color: #00FF7F; font-size: 11px; font-weight: bold;")
+        boost_hdr.addWidget(lbl_preamp_title)
+        boost_hdr.addStretch()
+        boost_hdr.addWidget(self.lbl_preamp_val)
+        boost_l.addLayout(boost_hdr)
+
+        self.sld_preamp = QSlider(Qt.Orientation.Horizontal, boost_box)
+        self.sld_preamp.setRange(0, 120)  # 0.0 to 12.0 dB
+        self.sld_preamp.setValue(0)
+        self.sld_preamp.setStyleSheet(slider_qss)
+        self.sld_preamp.valueChanged.connect(self._on_audio_control_changed)
+        boost_l.addWidget(self.sld_preamp)
+
+        lbl_boost_hint = QLabel("Amplifies system volume output up to +12 dB and scales visualizer reactivity.", boost_box)
+        lbl_boost_hint.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 10px;")
+        boost_l.addWidget(lbl_boost_hint)
+        layout_aud.addWidget(boost_box)
+
+        # 3. Quick Tone Controls (Bass, Clarity, Treble, Noise Filter)
+        tone_box = QWidget(aud_container)
+        tone_l = QVBoxLayout(tone_box)
+        tone_l.setContentsMargins(0, 0, 0, 0)
+        tone_l.setSpacing(4)
+
+        lbl_tone_title = QLabel("Tone & Noise Controls:", tone_box)
+        lbl_tone_title.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        lbl_tone_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()};")
+        tone_l.addWidget(lbl_tone_title)
+
+        grid_tones = QHBoxLayout()
+        # Left column: Bass & Clarity
+        col1 = QVBoxLayout()
+        col1.setSpacing(3)
+        # Bass
+        h_bass = QHBoxLayout()
+        h_bass.addWidget(QLabel("Bass (Low-Shelf):"))
+        self.lbl_bass_val = QLabel("0.0 dB")
+        self.lbl_bass_val.setStyleSheet("color: #89B4FA; font-size: 10px;")
+        h_bass.addStretch()
+        h_bass.addWidget(self.lbl_bass_val)
+        self.sld_bass = QSlider(Qt.Orientation.Horizontal)
+        self.sld_bass.setRange(-120, 120)
+        self.sld_bass.setValue(0)
+        self.sld_bass.setStyleSheet(slider_qss)
+        self.sld_bass.valueChanged.connect(self._on_audio_control_changed)
+        col1.addLayout(h_bass)
+        col1.addWidget(self.sld_bass)
+
+        # Clarity
+        h_clarity = QHBoxLayout()
+        h_clarity.addWidget(QLabel("Vocal Clarity:"))
+        self.lbl_clarity_val = QLabel("0.0 dB")
+        self.lbl_clarity_val.setStyleSheet("color: #89B4FA; font-size: 10px;")
+        h_clarity.addStretch()
+        h_clarity.addWidget(self.lbl_clarity_val)
+        self.sld_clarity = QSlider(Qt.Orientation.Horizontal)
+        self.sld_clarity.setRange(-120, 120)
+        self.sld_clarity.setValue(0)
+        self.sld_clarity.setStyleSheet(slider_qss)
+        self.sld_clarity.valueChanged.connect(self._on_audio_control_changed)
+        col1.addLayout(h_clarity)
+        col1.addWidget(self.sld_clarity)
+        grid_tones.addLayout(col1)
+
+        # Right column: Treble & Noise Gate
+        col2 = QVBoxLayout()
+        col2.setSpacing(3)
+        # Treble
+        h_treble = QHBoxLayout()
+        h_treble.addWidget(QLabel("Treble / Air:"))
+        self.lbl_treble_val = QLabel("0.0 dB")
+        self.lbl_treble_val.setStyleSheet("color: #89B4FA; font-size: 10px;")
+        h_treble.addStretch()
+        h_treble.addWidget(self.lbl_treble_val)
+        self.sld_treble = QSlider(Qt.Orientation.Horizontal)
+        self.sld_treble.setRange(-120, 120)
+        self.sld_treble.setValue(0)
+        self.sld_treble.setStyleSheet(slider_qss)
+        self.sld_treble.valueChanged.connect(self._on_audio_control_changed)
+        col2.addLayout(h_treble)
+        col2.addWidget(self.sld_treble)
+
+        # Noise Filter
+        h_noise = QHBoxLayout()
+        h_noise.addWidget(QLabel("Noise Filter:"))
+        self.lbl_noise_gate_val = QLabel("5%")
+        self.lbl_noise_gate_val.setStyleSheet("color: #89B4FA; font-size: 10px;")
+        h_noise.addStretch()
+        h_noise.addWidget(self.lbl_noise_gate_val)
+        self.sld_noise_gate = QSlider(Qt.Orientation.Horizontal)
+        self.sld_noise_gate.setRange(0, 50)
+        self.sld_noise_gate.setValue(5)
+        self.sld_noise_gate.setStyleSheet(slider_qss)
+        self.sld_noise_gate.valueChanged.connect(self._on_audio_control_changed)
+        col2.addLayout(h_noise)
+        col2.addWidget(self.sld_noise_gate)
+        grid_tones.addLayout(col2)
+
+        tone_l.addLayout(grid_tones)
+        layout_aud.addWidget(tone_box)
+
+        # 4. 5-Band Equalizer Section
+        eq_box = QWidget(aud_container)
+        eq_l = QVBoxLayout(eq_box)
+        eq_l.setContentsMargins(0, 0, 0, 0)
+        eq_l.setSpacing(4)
+
+        eq_hdr = QHBoxLayout()
+        lbl_eq_title = QLabel("5-Band Equalizer:", eq_box)
+        lbl_eq_title.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        lbl_eq_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()};")
+        eq_hdr.addWidget(lbl_eq_title)
+        eq_hdr.addStretch()
+
+        self.cmb_preset = QComboBox(eq_box)
+        self.cmb_preset.addItems(["Flat", "Bass Boost", "Vocal Clarity", "Electronic", "Rock", "Acoustic", "Custom"])
+        self.cmb_preset.setStyleSheet(
+            f"QComboBox {{ background-color: {COLOR_BG_MANTLE.name()}; border: 1px solid {COLOR_BORDER.name()}; border-radius: 4px; padding: 2px 8px; color: {COLOR_TEXT_PRIMARY.name()}; font-size: 11px; }} QComboBox QAbstractItemView {{ background-color: {COLOR_BG_BASE.name()}; color: {COLOR_TEXT_PRIMARY.name()}; selection-background-color: {COLOR_BG_SURFACE.name()}; }}"
+        )
+        self.cmb_preset.currentTextChanged.connect(self._on_preset_changed)
+        eq_hdr.addWidget(self.cmb_preset)
+
+        self.btn_reset_eq = QPushButton("Reset Flat", eq_box)
+        self.btn_reset_eq.setFixedHeight(24)
+        self.btn_reset_eq.setStyleSheet(get_button_stylesheet())
+        self.btn_reset_eq.clicked.connect(self._reset_eq_flat)
+        eq_hdr.addWidget(self.btn_reset_eq)
+        eq_l.addLayout(eq_hdr)
+
+        # 5 Equalizer Sliders
+        eq_bands_layout = QHBoxLayout()
+        eq_bands_layout.setSpacing(8)
+
+        self.eq_band_sliders: List[QSlider] = []
+        self.eq_band_labels: List[QLabel] = []
+        freq_names = ["60 Hz", "250 Hz", "1 kHz", "4 kHz", "16 kHz"]
+
+        for i, name in enumerate(freq_names):
+            band_col = QVBoxLayout()
+            band_col.setSpacing(2)
+            lbl_freq = QLabel(name)
+            lbl_freq.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 10px; font-weight: bold;")
+            lbl_freq.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            sld = QSlider(Qt.Orientation.Vertical)
+            sld.setFixedHeight(60)
+            sld.setRange(-120, 120)
+            sld.setValue(0)
+            sld.setStyleSheet(
+                "QSlider::groove:vertical { width: 4px; background: #2A2A2A; border-radius: 2px; }"
+                "QSlider::sub-page:vertical { background: #2A2A2A; border-radius: 2px; }"
+                "QSlider::add-page:vertical { background: #00FF7F; border-radius: 2px; }"
+                "QSlider::handle:vertical { background: #FFFFFF; border: 1px solid #141414; height: 12px; margin-left: -4px; margin-right: -4px; border-radius: 6px; }"
+            )
+            sld.valueChanged.connect(self._on_band_slider_changed)
+
+            lbl_v = QLabel("0.0")
+            lbl_v.setStyleSheet("color: #8A8A8A; font-size: 9px;")
+            lbl_v.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            band_col.addWidget(lbl_freq)
+            band_col.addWidget(sld, 0, Qt.AlignmentFlag.AlignCenter)
+            band_col.addWidget(lbl_v)
+            eq_bands_layout.addLayout(band_col)
+
+            self.eq_band_sliders.append(sld)
+            self.eq_band_labels.append(lbl_v)
+
+        # Direct property accessors for bands
+        self.sld_band_60 = self.eq_band_sliders[0]
+        self.sld_band_250 = self.eq_band_sliders[1]
+        self.sld_band_1000 = self.eq_band_sliders[2]
+        self.sld_band_4000 = self.eq_band_sliders[3]
+        self.sld_band_16000 = self.eq_band_sliders[4]
+
+        eq_l.addLayout(eq_bands_layout)
+        layout_aud.addWidget(eq_box)
+
+        scroll_aud.setWidget(aud_container)
+        layout_aud_root.addWidget(scroll_aud)
 
         self.stacked_widget.addWidget(page_aud)
 
@@ -727,6 +982,72 @@ class SettingsDialog(QDialog):
         super().showEvent(event)
         self.load_settings()
 
+    def _on_audio_control_changed(self) -> None:
+        """Handle audio slider changes, update labels, and update visualizer live."""
+        preamp_db = self.sld_preamp.value() / 10.0
+        pct = int(round(math.pow(10.0, preamp_db / 20.0) * 100))
+        self.lbl_preamp_val.setText(f"+{preamp_db:.1f} dB ({pct}%)")
+
+        bass_db = self.sld_bass.value() / 10.0
+        self.lbl_bass_val.setText(f"{bass_db:+.1f} dB")
+
+        clarity_db = self.sld_clarity.value() / 10.0
+        self.lbl_clarity_val.setText(f"{clarity_db:+.1f} dB")
+
+        treble_db = self.sld_treble.value() / 10.0
+        self.lbl_treble_val.setText(f"{treble_db:+.1f} dB")
+
+        noise_gate = self.sld_noise_gate.value()
+        self.lbl_noise_gate_val.setText(f"{noise_gate}%")
+
+        for sld, lbl in zip(self.eq_band_sliders, self.eq_band_labels):
+            lbl.setText(f"{sld.value() / 10.0:+.1f}")
+
+        # Update visualizer live if media_core is available
+        if not self._is_updating_ui and self._media_core and hasattr(self._media_core, "_analyzer") and self._media_core._analyzer:
+            bands = [s.value() / 10.0 for s in self.eq_band_sliders]
+            self._media_core._analyzer.set_eq_profile(
+                preamp_boost_db=preamp_db,
+                bass_db=bass_db,
+                clarity_db=clarity_db,
+                treble_db=treble_db,
+                eq_bands=bands,
+                noise_gate_percent=noise_gate,
+                eq_enabled=self.chk_eq_enabled.isChecked(),
+            )
+
+    def _on_band_slider_changed(self) -> None:
+        """Handle individual EQ band changes and flag Custom preset."""
+        if not self._is_updating_ui:
+            self.cmb_preset.blockSignals(True)
+            self.cmb_preset.setCurrentText("Custom")
+            self.cmb_preset.blockSignals(False)
+        self._on_audio_control_changed()
+
+    def _on_preset_changed(self, preset_name: str) -> None:
+        """Apply selected preset to the 5 equalizer bands."""
+        if preset_name in EQ_PRESETS:
+            self._is_updating_ui = True
+            bands = EQ_PRESETS[preset_name]
+            for sld, val in zip(self.eq_band_sliders, bands):
+                sld.setValue(int(round(val * 10)))
+            self._is_updating_ui = False
+            self._on_audio_control_changed()
+
+    def _reset_eq_flat(self) -> None:
+        """Reset equalizer and tone sliders to flat 0 dB."""
+        self._is_updating_ui = True
+        self.sld_preamp.setValue(0)
+        self.sld_bass.setValue(0)
+        self.sld_clarity.setValue(0)
+        self.sld_treble.setValue(0)
+        self.sld_noise_gate.setValue(5)
+        for sld in self.eq_band_sliders:
+            sld.setValue(0)
+        self.cmb_preset.setCurrentText("Flat")
+        self._is_updating_ui = False
+        self._on_audio_control_changed()
+
     def load_settings(self) -> None:
         """Load current preference values from SettingsManager into controls."""
         self.chk_close_to_tray.setChecked(self._settings_manager.get_close_to_tray())
@@ -749,6 +1070,29 @@ class SettingsDialog(QDialog):
         self.rec_hotkey_play_pause.set_sequence(
             self._settings_manager.get_hotkey_play_pause()
         )
+
+        # Audio & Equalizer Settings
+        self._is_updating_ui = True
+        self.chk_eq_enabled.setChecked(self._settings_manager.get_eq_enabled())
+        self.sld_preamp.setValue(int(round(self._settings_manager.get_preamp_boost_db() * 10)))
+        self.sld_bass.setValue(int(round(self._settings_manager.get_bass_db() * 10)))
+        self.sld_clarity.setValue(int(round(self._settings_manager.get_clarity_db() * 10)))
+        self.sld_treble.setValue(int(round(self._settings_manager.get_treble_db() * 10)))
+        self.sld_noise_gate.setValue(self._settings_manager.get_noise_gate_percent())
+
+        preset = self._settings_manager.get_eq_preset()
+        self.cmb_preset.blockSignals(True)
+        self.cmb_preset.setCurrentText(preset if preset else "Flat")
+        self.cmb_preset.blockSignals(False)
+
+        bands = self._settings_manager.get_eq_bands()
+        for i, sld in enumerate(self.eq_band_sliders):
+            v = bands[i] if i < len(bands) else 0.0
+            sld.setValue(int(round(v * 10)))
+
+        self._is_updating_ui = False
+        self._on_audio_control_changed()
+
         self.lbl_error.hide()
 
     def save_settings(self) -> None:
@@ -764,6 +1108,21 @@ class SettingsDialog(QDialog):
             self.chk_dynamic_island.isChecked()
         )
         self._settings_manager.set_collapse_delay_ms(self.spn_collapse_delay.value())
+
+        # Save Audio & Equalizer Settings
+        self._settings_manager.set_eq_enabled(self.chk_eq_enabled.isChecked())
+        self._settings_manager.set_preamp_boost_db(self.sld_preamp.value() / 10.0)
+        self._settings_manager.set_bass_db(self.sld_bass.value() / 10.0)
+        self._settings_manager.set_clarity_db(self.sld_clarity.value() / 10.0)
+        self._settings_manager.set_treble_db(self.sld_treble.value() / 10.0)
+        self._settings_manager.set_noise_gate_percent(self.sld_noise_gate.value())
+        self._settings_manager.set_eq_preset(self.cmb_preset.currentText())
+
+        bands = [sld.value() / 10.0 for sld in self.eq_band_sliders]
+        self._settings_manager.set_eq_bands(bands)
+
+        if self._media_core and hasattr(self._media_core, "sync_audio_settings"):
+            self._media_core.sync_audio_settings(self._settings_manager)
 
         # 2. Validate hotkey inputs
         if self.rec_hotkey_show_hide.validation_error():

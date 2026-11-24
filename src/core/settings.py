@@ -29,6 +29,16 @@ def _to_int(value: Any, default: int) -> int:
         return default
 
 
+def _to_float(value: Any, default: float) -> float:
+    """Convert QSettings value to explicit float safely."""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
 class SettingsManager(QObject):
     """Decoupled settings manager wrapping QSettings with typed accessors and signals."""
 
@@ -45,6 +55,18 @@ class SettingsManager(QObject):
         "dynamic_island/collapse_delay_ms": 3500,
         "hotkeys/show_hide": "Ctrl+Alt+S",
         "hotkeys/play_pause": "Ctrl+Alt+Space",
+        "audio/preamp_boost_db": 0.0,
+        "audio/bass_db": 0.0,
+        "audio/clarity_db": 0.0,
+        "audio/treble_db": 0.0,
+        "audio/noise_gate_percent": 5,
+        "audio/eq_preset": "Flat",
+        "audio/eq_band_60": 0.0,
+        "audio/eq_band_250": 0.0,
+        "audio/eq_band_1000": 0.0,
+        "audio/eq_band_4000": 0.0,
+        "audio/eq_band_16000": 0.0,
+        "audio/eq_enabled": True,
     }
 
 
@@ -71,6 +93,8 @@ class SettingsManager(QObject):
             return _to_bool(raw_val, default)
         if isinstance(default, int):
             return _to_int(raw_val, default)
+        if isinstance(default, float):
+            return _to_float(raw_val, default)
         return raw_val
 
     def set(self, key: str, value: Any) -> None:
@@ -169,6 +193,94 @@ class SettingsManager(QObject):
     def set_hotkey_play_pause(self, sequence: str) -> None:
         """Set global hotkey sequence string for Toggle Play/Pause."""
         self.set("hotkeys/play_pause", str(sequence))
+
+    # --- Audio & Equalizer Accessors ---
+
+    def get_preamp_boost_db(self) -> float:
+        """Return audio preamplifier volume boost in dB (0.0 to 12.0 dB)."""
+        return float(self.get("audio/preamp_boost_db"))
+
+    def set_preamp_boost_db(self, val: float) -> None:
+        """Set audio preamplifier volume boost in dB (clamped 0.0 to 12.0 dB)."""
+        clamped = max(0.0, min(12.0, float(val)))
+        self.set("audio/preamp_boost_db", clamped)
+
+    def get_bass_db(self) -> float:
+        """Return bass boost/cut in dB (-12.0 to +12.0 dB)."""
+        return float(self.get("audio/bass_db"))
+
+    def set_bass_db(self, val: float) -> None:
+        """Set bass boost/cut in dB (-12.0 to +12.0 dB)."""
+        clamped = max(-12.0, min(12.0, float(val)))
+        self.set("audio/bass_db", clamped)
+
+    def get_clarity_db(self) -> float:
+        """Return vocal/mid clarity filter in dB (-12.0 to +12.0 dB)."""
+        return float(self.get("audio/clarity_db"))
+
+    def set_clarity_db(self, val: float) -> None:
+        """Set vocal/mid clarity filter in dB (-12.0 to +12.0 dB)."""
+        clamped = max(-12.0, min(12.0, float(val)))
+        self.set("audio/clarity_db", clamped)
+
+    def get_treble_db(self) -> float:
+        """Return treble/air filter in dB (-12.0 to +12.0 dB)."""
+        return float(self.get("audio/treble_db"))
+
+    def set_treble_db(self, val: float) -> None:
+        """Set treble/air filter in dB (-12.0 to +12.0 dB)."""
+        clamped = max(-12.0, min(12.0, float(val)))
+        self.set("audio/treble_db", clamped)
+
+    def get_noise_gate_percent(self) -> int:
+        """Return noise gate/filter threshold percentage (0 to 50%)."""
+        return int(self.get("audio/noise_gate_percent"))
+
+    def set_noise_gate_percent(self, val: int) -> None:
+        """Set noise gate/filter threshold percentage (0 to 50%)."""
+        clamped = max(0, min(50, int(val)))
+        self.set("audio/noise_gate_percent", clamped)
+
+    def get_eq_preset(self) -> str:
+        """Return current equalizer preset name."""
+        return str(self.get("audio/eq_preset"))
+
+    def set_eq_preset(self, preset: str) -> None:
+        """Set current equalizer preset name."""
+        self.set("audio/eq_preset", str(preset))
+
+    def get_eq_bands(self) -> list:
+        """Return 5-band graphic EQ values [60Hz, 250Hz, 1kHz, 4kHz, 16kHz] in dB."""
+        keys = [
+            "audio/eq_band_60",
+            "audio/eq_band_250",
+            "audio/eq_band_1000",
+            "audio/eq_band_4000",
+            "audio/eq_band_16000",
+        ]
+        return [float(self.get(k)) for k in keys]
+
+    def set_eq_bands(self, bands: list) -> None:
+        """Set 5-band graphic EQ values in dB (-12.0 to +12.0 dB)."""
+        keys = [
+            "audio/eq_band_60",
+            "audio/eq_band_250",
+            "audio/eq_band_1000",
+            "audio/eq_band_4000",
+            "audio/eq_band_16000",
+        ]
+        for i, k in enumerate(keys):
+            v = bands[i] if i < len(bands) else 0.0
+            clamped = max(-12.0, min(12.0, float(v)))
+            self.set(k, clamped)
+
+    def get_eq_enabled(self) -> bool:
+        """Return whether equalizer and audio enhancement processing is enabled."""
+        return bool(self.get("audio/eq_enabled"))
+
+    def set_eq_enabled(self, enabled: bool) -> None:
+        """Set whether equalizer and audio enhancement processing is enabled."""
+        self.set("audio/eq_enabled", bool(enabled))
 
     def sync(self) -> None:
         """Synchronize in-memory settings to persistent QSettings storage."""

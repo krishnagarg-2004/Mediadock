@@ -141,8 +141,8 @@ def classify_media_source(source_name: str, title: str = "", artist: str = "") -
     return "default_media"
 
 
-class CollapsedCapsuleWidget(QWidget):
-    """Reusable presentation-only top-center Dynamic Island collapsed capsule (180x40 px target)."""
+class CollapsedNotchWidget(QWidget):
+    """Reusable presentation-only top-center Dynamic Island collapsed notch screen (180x40 px target)."""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -255,16 +255,27 @@ class CollapsedCapsuleWidget(QWidget):
         self.update()
 
     def paintEvent(self, event) -> None:
-        """Paint clean rounded capsule background (20px border radius for 40px height)."""
+        """Paint clean notch background (flat top edge flush with screen bezel, rounded bottom corners)."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.0, -0.5, -0.5)
+        r = 16.0
         path = QPainterPath()
-        path.addRoundedRect(rect, 20.0, 20.0)
+        path.moveTo(rect.left(), rect.top())
+        path.lineTo(rect.right(), rect.top())
+        path.lineTo(rect.right(), rect.bottom() - r)
+        path.quadTo(rect.right(), rect.bottom(), rect.right() - r, rect.bottom())
+        path.lineTo(rect.left() + r, rect.bottom())
+        path.quadTo(rect.left(), rect.bottom(), rect.left(), rect.bottom() - r)
+        path.closeSubpath()
 
         painter.fillPath(path, self._bg_color)
         pen = QPen(self._border_color, 1.0)
         painter.setPen(pen)
         painter.drawPath(path)
         painter.end()
+
+
+# Backward compatibility alias for existing consumers and tests
+CollapsedCapsuleWidget = CollapsedNotchWidget

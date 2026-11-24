@@ -177,6 +177,61 @@ class TestSettingsDialog(unittest.TestCase):
         dlg.sidebar.setCurrentRow(5)  # About page
         self.assertEqual(dlg.stacked_widget.currentIndex(), 5)
 
+    def test_audio_equalizer_ui_controls_initialization(self) -> None:
+        """Verify audio boost, tone sliders, and 5-band EQ controls exist and initialize with defaults."""
+        dlg = SettingsDialog(settings_manager=self.settings)
+        self.assertIsNotNone(dlg.chk_eq_enabled)
+        self.assertIsNotNone(dlg.sld_preamp)
+        self.assertIsNotNone(dlg.sld_bass)
+        self.assertIsNotNone(dlg.sld_clarity)
+        self.assertIsNotNone(dlg.sld_treble)
+        self.assertIsNotNone(dlg.sld_noise_gate)
+        self.assertIsNotNone(dlg.cmb_preset)
+        self.assertEqual(len(dlg.eq_band_sliders), 5)
+        self.assertIsNotNone(dlg.btn_reset_eq)
+
+        # Initial default values
+        self.assertTrue(dlg.chk_eq_enabled.isChecked())
+        self.assertEqual(dlg.sld_preamp.value(), 0)
+        self.assertEqual(dlg.sld_bass.value(), 0)
+        self.assertEqual(dlg.sld_clarity.value(), 0)
+        self.assertEqual(dlg.sld_treble.value(), 0)
+        self.assertEqual(dlg.sld_noise_gate.value(), 5)
+        self.assertEqual(dlg.cmb_preset.currentText(), "Flat")
+
+    def test_audio_equalizer_ui_save_and_reload(self) -> None:
+        """Verify modifying audio boost and tone sliders saves and persists into SettingsManager."""
+        dlg = SettingsDialog(settings_manager=self.settings)
+        dlg.sld_preamp.setValue(50)  # +5.0 dB
+        dlg.sld_bass.setValue(40)    # +4.0 dB
+        dlg.sld_clarity.setValue(30) # +3.0 dB
+        dlg.sld_treble.setValue(-20) # -2.0 dB
+        dlg.sld_noise_gate.setValue(12)
+        dlg.sld_band_60.setValue(35)
+        dlg.save_settings()
+
+        self.assertAlmostEqual(self.settings.get_preamp_boost_db(), 5.0, places=1)
+        self.assertAlmostEqual(self.settings.get_bass_db(), 4.0, places=1)
+        self.assertAlmostEqual(self.settings.get_clarity_db(), 3.0, places=1)
+        self.assertAlmostEqual(self.settings.get_treble_db(), -2.0, places=1)
+        self.assertEqual(self.settings.get_noise_gate_percent(), 12)
+        self.assertAlmostEqual(self.settings.get_eq_bands()[0], 3.5, places=1)
+
+    def test_audio_preset_selection_and_reset(self) -> None:
+        """Verify selecting a preset updates sliders and clicking reset restores Flat."""
+        dlg = SettingsDialog(settings_manager=self.settings)
+        dlg.cmb_preset.setCurrentText("Bass Boost")
+
+        # 60Hz band should have updated
+        self.assertGreater(dlg.sld_band_60.value(), 0)
+
+        # Reset Flat button
+        dlg.btn_reset_eq.click()
+        self.assertEqual(dlg.sld_preamp.value(), 0)
+        self.assertEqual(dlg.sld_bass.value(), 0)
+        self.assertEqual(dlg.sld_band_60.value(), 0)
+        self.assertEqual(dlg.cmb_preset.currentText(), "Flat")
+
 
 if __name__ == "__main__":
     unittest.main()

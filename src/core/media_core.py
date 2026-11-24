@@ -1,7 +1,7 @@
 """MediaCore event coordinator bridging media providers to PySide6 Qt signals."""
 
 import logging
-from typing import Optional
+from typing import Optional, Any
 
 from PySide6.QtCore import QObject, Signal
 
@@ -10,6 +10,7 @@ from src.media.base_provider import BaseMediaProvider
 from src.media.volume_provider import BaseVolumeProvider, WindowsVolumeProvider
 from src.media.audio_capture import BaseAudioCapture, WASAPILoopbackCapture, AudioFrame
 from src.media.audio_analyzer import AudioAnalyzer
+from src.media.equalizer_apo import EqualizerAPOManager
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,8 @@ class MediaCore(QObject):
         volume_provider: Optional[BaseVolumeProvider] = None,
         audio_capture: Optional[BaseAudioCapture] = None,
         analyzer: Optional[AudioAnalyzer] = None,
+        apo_manager: Optional[EqualizerAPOManager] = None,
+        settings_manager: Optional[Any] = None,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(parent)
@@ -43,7 +46,56 @@ class MediaCore(QObject):
         self._analyzer = (
             analyzer if analyzer is not None else AudioAnalyzer(bar_count=5)
         )
+        self._apo_manager = (
+            apo_manager if apo_manager is not None else EqualizerAPOManager()
+        )
+        self._settings_manager = settings_manager
         self._wire_provider_callbacks()
+        if self._settings_manager is not None:
+            self.sync_audio_settings(self._settings_manager)
+
+    @property
+    def apo_manager(self) -> EqualizerAPOManager:
+        """Return the EqualizerAPOManager instance."""
+        return self._apo_manager
+
+    def sync_audio_settings(self, settings: Optional[Any] = None) -> None:
+        """Synchronize audio equalizer, boost, and tone settings across analyzer and Equalizer APO."""
+        mgr = settings or self._settings_manager
+        if mgr is None:
+            return
+
+        try:
+            preamp = mgr.get_preamp_boost_db()
+            bass = mgr.get_bass_db()
+            clarity = mgr.get_clarity_db()
+            treble = mgr.get_treble_db()
+            bands = mgr.get_eq_bands()
+            noise_gate = mgr.get_noise_gate_percent()
+            eq_enabled = mgr.get_eq_enabled()
+
+            if self._analyzer:
+                self._analyzer.set_eq_profile(
+                    preamp_boost_db=preamp,
+                    bass_db=bass,
+                    clarity_db=clarity,
+                    treble_db=treble,
+                    eq_bands=bands,
+                    noise_gate_percent=noise_gate,
+                    eq_enabled=eq_enabled,
+                )
+
+            if self._apo_manager:
+                self._apo_manager.apply_eq(
+                    preamp_boost_db=preamp,
+                    bass_db=bass,
+                    clarity_db=clarity,
+                    treble_db=treble,
+                    eq_bands=bands,
+                    eq_enabled=eq_enabled,
+                )
+        except Exception as e:
+            logger.warning("Error syncing audio settings: %s", e)
 
     def _wire_provider_callbacks(self) -> None:
         """Register internal callback handlers on underlying media, volume, and audio providers."""

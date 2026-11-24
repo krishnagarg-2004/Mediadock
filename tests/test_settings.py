@@ -182,6 +182,43 @@ class TestSettingsManager(unittest.TestCase):
         self.assertFalse(fresh_mgr.get_always_on_top())
         self.assertEqual(fresh_mgr.get_collapse_delay_ms(), 6500)
 
+    def test_audio_equalizer_settings_persistence(self) -> None:
+        """Verify audio boost, tone controls, noise gate, and 5-band EQ persist cleanly."""
+        self.settings.set_preamp_boost_db(4.5)
+        self.settings.set_bass_db(6.0)
+        self.settings.set_clarity_db(3.5)
+        self.settings.set_treble_db(-1.5)
+        self.settings.set_noise_gate_percent(15)
+        self.settings.set_eq_preset("Electronic")
+        self.settings.set_eq_bands([4.0, 2.0, -1.0, 2.5, 4.0])
+        self.settings.set_eq_enabled(True)
+
+        fresh_qs = QSettings(self.tmp_file.name, QSettings.Format.IniFormat)
+        fresh_mgr = SettingsManager(qsettings=fresh_qs)
+
+        self.assertAlmostEqual(fresh_mgr.get_preamp_boost_db(), 4.5, places=1)
+        self.assertAlmostEqual(fresh_mgr.get_bass_db(), 6.0, places=1)
+        self.assertAlmostEqual(fresh_mgr.get_clarity_db(), 3.5, places=1)
+        self.assertAlmostEqual(fresh_mgr.get_treble_db(), -1.5, places=1)
+        self.assertEqual(fresh_mgr.get_noise_gate_percent(), 15)
+        self.assertEqual(fresh_mgr.get_eq_preset(), "Electronic")
+        self.assertEqual(fresh_mgr.get_eq_bands(), [4.0, 2.0, -1.0, 2.5, 4.0])
+        self.assertTrue(fresh_mgr.get_eq_enabled())
+
+    def test_audio_settings_clamping(self) -> None:
+        """Verify bounds clamping on audio boost, tone controls, and noise gate."""
+        self.settings.set_preamp_boost_db(25.0)  # max 12.0
+        self.assertEqual(self.settings.get_preamp_boost_db(), 12.0)
+
+        self.settings.set_preamp_boost_db(-5.0)  # min 0.0
+        self.assertEqual(self.settings.get_preamp_boost_db(), 0.0)
+
+        self.settings.set_bass_db(20.0)  # max 12.0
+        self.assertEqual(self.settings.get_bass_db(), 12.0)
+
+        self.settings.set_noise_gate_percent(100)  # max 50%
+        self.assertEqual(self.settings.get_noise_gate_percent(), 50)
+
 
 if __name__ == "__main__":
     unittest.main()

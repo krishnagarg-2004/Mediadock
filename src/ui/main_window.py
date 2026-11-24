@@ -33,7 +33,7 @@ from src.core.media_core import MediaCore
 from src.core.settings import SettingsManager
 from src.ui.frameless_window import FramelessWindow
 from src.ui.components import ElidedLabel
-from src.ui.components_island import ReactiveVisualizerWidget, CollapsedCapsuleWidget
+from src.ui.components_island import ReactiveVisualizerWidget, CollapsedCapsuleWidget, CollapsedNotchWidget
 from src.ui.theme import (
     COLOR_BG_ISLAND,
     COLOR_ACCENT_BLUE,
@@ -91,7 +91,7 @@ def _format_time_ms(ms: int) -> str:
     return f"{minutes:02d}:{seconds:02d}"
 
 
-TOP_OFFSET_PX: int = 12
+TOP_OFFSET_PX: int = 0
 COLLAPSED_SIZE = (180, 40)
 EXPANDED_SIZE = (360, 160)
 
@@ -178,6 +178,11 @@ class MainWindow(FramelessWindow):
     def island_state(self) -> DynamicIslandState:
         """Return current authoritative DynamicIslandState."""
         return self._state
+
+    @property
+    def notch_widget(self) -> CollapsedNotchWidget:
+        """Return reference to the collapsed notch presentation widget."""
+        return self._capsule_widget
 
     def _on_geom_anim_finished(self) -> None:
         """Lock fixed size for target state upon pop-in / pop-out animation completion."""
@@ -431,8 +436,9 @@ class MainWindow(FramelessWindow):
         root_layout.setSpacing(0)
         root_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
 
-        # 1. Collapsed Capsule Component Container
-        self._capsule_widget = CollapsedCapsuleWidget(self)
+        # 1. Collapsed Notch Component Container
+        self._capsule_widget = CollapsedNotchWidget(self)
+        self._notch_widget = self._capsule_widget
         root_layout.addWidget(self._capsule_widget)
 
         # 2. Expanded Card Container Widget
