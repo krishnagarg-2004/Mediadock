@@ -1,8 +1,9 @@
 """Main application widget window for MediaDock."""
 
+import sys
 import time
 from typing import Any, Optional
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QAbstractAnimation, QRect, QEasingCurve
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QAbstractAnimation, QRect, QRectF, QEasingCurve, Signal
 from PySide6.QtGui import (
     QKeyEvent,
     QColor,
@@ -16,12 +17,14 @@ from PySide6.QtGui import (
     QAction,
     QGuiApplication,
     QRadialGradient,
+    QLinearGradient,
     QCursor,
 )
 
 from PySide6.QtWidgets import (
     QApplication,
     QWidget,
+    QFrame,
     QHBoxLayout,
     QVBoxLayout,
     QLabel,
@@ -48,14 +51,22 @@ from src.core.media_core import MediaCore
 from src.core.settings import SettingsManager
 from src.core.fullscreen_detector import is_foreground_fullscreen
 from src.media.lyrics_provider import LyricsProvider
-from src.ui.frameless_window import FramelessWindow
+from src.ui.frameless_window import FramelessWindow, build_desknotch_path
 from src.ui.components import ElidedLabel, InteractiveScrubSlider
-from src.ui.components_island import ReactiveVisualizerWidget, CollapsedCapsuleWidget, CollapsedNotchWidget
+from src.ui.components_island import (
+    ReactiveVisualizerWidget,
+    CollapsedCapsuleWidget,
+    CollapsedNotchWidget,
+    classify_media_source,
+)
 from src.ui.theme import (
     COLOR_BG_ISLAND,
     COLOR_ACCENT_BLUE,
+    create_rounded_pixmap,
     extract_dominant_color,
     get_button_stylesheet,
+    get_desknotch_icon_button_stylesheet,
+    get_desknotch_play_button_stylesheet,
     get_slider_stylesheet,
     get_status_badge_style,
     get_svg_icon,
@@ -109,27 +120,32 @@ def _format_time_ms(ms: int) -> str:
 
 
 TOP_OFFSET_PX: int = 0
-COLLAPSED_SIZE = (180, 40)
-EXPANDED_SIZE = (360, 160)
+COLLAPSED_SIZE = (220, 34)
+EXPANDED_SIZE = (380, 174)
 
 
 class MainWindow(FramelessWindow):
-    """Main application widget window for MediaDock with interactive controls and progress tracking."""
+    """Main application widget window for MediaDock styled with DeskNotch aesthetics."""
+
+    open_settings_requested = Signal()
 
     def __init__(
         self,
         media_core: Optional[MediaCore] = None,
         settings_manager: Optional[SettingsManager] = None,
         parent: Optional[QWidget] = None,
-        border_radius: float = 16.0,
+        border_radius: float = 14.0,
         bg_color: QColor = COLOR_BG_ISLAND,
     ) -> None:
-        super().__init__(parent, border_radius=border_radius, bg_color=bg_color, allow_drag=False)
+        super().__init__(parent, border_radius=border_radius, ear_radius=8.0, bg_color=bg_color, allow_drag=False)
         self.setWindowTitle("MediaDock")
 
         self._media_core = media_core
         self._settings_manager = settings_manager or SettingsManager()
         self._default_art_pixmap = self._create_default_art_pixmap()
+        self._is_pinned: bool = False
+        self._manually_hidden: bool = False
+        self._current_source_display: str = "MediaDock"
 
         # Dynamic Island State Machine & Collapse Timer Initialization
         self._state: DynamicIslandState = DynamicIslandState.HIDDEN
@@ -220,15 +236,21 @@ class MainWindow(FramelessWindow):
     def _on_geom_anim_finished(self) -> None:
         """Lock fixed size for target state upon pop-in / pop-out animation completion."""
         if self._state == DynamicIslandState.COLLAPSED:
+            self._border_radius = 14.0
+            self._ear_radius = 8.0
             target_rect = self.compute_top_center_collapsed_geometry()
             self.setGeometry(target_rect)
             self._capsule_widget.setFixedSize(COLLAPSED_SIZE[0], COLLAPSED_SIZE[1])
             self.setFixedSize(COLLAPSED_SIZE[0], COLLAPSED_SIZE[1])
         elif self._state == DynamicIslandState.EXPANDED:
+            self._border_radius = 26.0
+            self._ear_radius = 10.0
             target_rect = self.compute_top_center_expanded_geometry()
             self.setGeometry(target_rect)
             self._expanded_widget.setFixedSize(EXPANDED_SIZE[0], EXPANDED_SIZE[1])
             self.setFixedSize(EXPANDED_SIZE[0], EXPANDED_SIZE[1])
+        self._enforce_topmost_zorder()
+        self.update()
 
     def set_state(self, state: DynamicIslandState, animate: bool = True) -> None:
         """Transition Dynamic Island to new state (HIDDEN, COLLAPSED, or EXPANDED) with optional pop-in/pop-out animation."""
@@ -248,6 +270,8 @@ class MainWindow(FramelessWindow):
             self.hide()
 
         elif state == DynamicIslandState.COLLAPSED:
+            self._border_radius = 14.0
+            self._ear_radius = 8.0
             if self._collapse_timer.isActive():
                 self._collapse_timer.stop()
 
@@ -281,8 +305,11 @@ class MainWindow(FramelessWindow):
                 self.setFixedSize(COLLAPSED_SIZE[0], COLLAPSED_SIZE[1])
                 self.setGeometry(target_rect)
                 self.show()
+                self._enforce_topmost_zorder()
 
         elif state == DynamicIslandState.EXPANDED:
+            self._border_radius = 26.0
+            self._ear_radius = 10.0
             if self._collapse_timer.isActive():
                 self._collapse_timer.stop()
 
@@ -316,13 +343,38 @@ class MainWindow(FramelessWindow):
                 self.setFixedSize(EXPANDED_SIZE[0], EXPANDED_SIZE[1])
                 self.setGeometry(target_rect)
                 self.show()
+                self._enforce_topmost_zorder()
+
+    def _enforce_topmost_zorder(self) -> None:
+        """Promote notch window above desktop & maximized windows without stealing focus."""
+        if not self.isVisible():
+            return
+        self.raise_()
+        if sys.platform == "win32" and self._settings_manager.get_always_on_top():
+            try:
+                import ctypes
+                HWND_TOPMOST = -1
+                SWP_NOSIZE = 0x0001
+                SWP_NOMOVE = 0x0002
+                SWP_NOACTIVATE = 0x0010
+                SWP_SHOWWINDOW = 0x0040
+                ctypes.windll.user32.SetWindowPos(
+                    int(self.winId()),
+                    HWND_TOPMOST,
+                    0, 0, 0, 0,
+                    SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                )
+            except Exception:
+                pass
 
     def toggle_dynamic_island_visibility(self) -> None:
         """Toggle Dynamic Island between HIDDEN and COLLAPSED/EXPANDED."""
         if self._state == DynamicIslandState.HIDDEN:
             if self._settings_manager.get_dynamic_island_enabled():
+                self._manually_hidden = False
                 self.set_state(DynamicIslandState.COLLAPSED)
         else:
+            self._manually_hidden = True
             self.set_state(DynamicIslandState.HIDDEN)
 
     def enterEvent(self, event) -> None:
@@ -350,7 +402,7 @@ class MainWindow(FramelessWindow):
         super().leaveEvent(event)
         if self._hover_intent_timer.isActive():
             self._hover_intent_timer.stop()
-        if self._state == DynamicIslandState.EXPANDED:
+        if self._state == DynamicIslandState.EXPANDED and not self._is_pinned:
             delay_ms = self._settings_manager.get_collapse_delay_ms()
             self._collapse_timer.start(delay_ms)
 
@@ -371,7 +423,7 @@ class MainWindow(FramelessWindow):
 
     def _on_collapse_timer_timeout(self) -> None:
         """Single-shot collapse timer timeout handler."""
-        if self._state == DynamicIslandState.EXPANDED:
+        if self._state == DynamicIslandState.EXPANDED and not self._is_pinned:
             self.set_state(DynamicIslandState.COLLAPSED)
 
     def _on_fullscreen_timer_tick(self) -> None:
@@ -386,8 +438,14 @@ class MainWindow(FramelessWindow):
         screen = self.screen() or QGuiApplication.primaryScreen()
         if not screen:
             return
+        dpr = screen.devicePixelRatio() if hasattr(screen, "devicePixelRatio") else 1.0
         geom = screen.geometry()
-        screen_rect = (geom.x(), geom.y(), geom.width(), geom.height())
+        screen_rect = (
+            int(round(geom.x() * dpr)),
+            int(round(geom.y() * dpr)),
+            int(round(geom.width() * dpr)),
+            int(round(geom.height() * dpr)),
+        )
         win_id = int(self.winId()) if self.isVisible() else None
 
         is_fs = is_foreground_fullscreen(screen_rect, ignore_hwnd=win_id)
@@ -399,20 +457,52 @@ class MainWindow(FramelessWindow):
             self._suppressed_by_fullscreen = False
             if self._state != DynamicIslandState.HIDDEN:
                 self.show()
+                self._enforce_topmost_zorder()
 
     def paintEvent(self, event) -> None:
-        """Paint frameless notch base and subtle ambient color glow when expanded."""
-        super().paintEvent(event)
+        """Paint DeskNotch flared-ear obsidian glass shell and radial album-art cover glow."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        rect = QRectF(self.rect()).adjusted(0.5, 0.0, -0.5, -0.5)
+        path = build_desknotch_path(
+            rect,
+            bottom_radius=self._border_radius,
+            ear_radius=self._ear_radius,
+        )
+
+        # Base obsidian shell
+        painter.fillPath(path, self._bg_color)
+
+        # Layered translucent frost top sheen
+        sheen = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
+        sheen.setColorAt(0.0, QColor(255, 255, 255, 14))
+        sheen.setColorAt(0.45, QColor(255, 255, 255, 5))
+        sheen.setColorAt(1.0, QColor(255, 255, 255, 2))
+        painter.fillPath(path, sheen)
+
+        # DeskNotch signature radial cover glow anchored behind left artwork (when expanded)
         if self._state == DynamicIslandState.EXPANDED and hasattr(self, "_current_accent"):
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            glow_grad = QRadialGradient(float(self.rect().center().x()), float(self.rect().top()), float(self.width() * 0.75))
-            glow_col = QColor(self._current_accent)
-            glow_col.setAlpha(26)
-            glow_grad.setColorAt(0.0, glow_col)
+            painter.save()
+            painter.setClipPath(path)
+            glow_cx = rect.left() + 68.0
+            glow_cy = rect.top() + 72.0
+            glow_grad = QRadialGradient(glow_cx, glow_cy, float(self.width() * 0.65))
+            c1 = QColor(self._current_accent)
+            c1.setAlpha(74)
+            c2 = QColor(self._current_accent)
+            c2.setAlpha(18)
+            glow_grad.setColorAt(0.0, c1)
+            glow_grad.setColorAt(0.55, c2)
             glow_grad.setColorAt(1.0, QColor(0, 0, 0, 0))
             painter.fillRect(self.rect(), glow_grad)
-            painter.end()
+            painter.restore()
+
+        # Subtle hairline border stroke for edge highlight
+        pen = QPen(QColor(255, 255, 255, 22), 1.0)
+        painter.setPen(pen)
+        painter.drawPath(path)
+        painter.end()
 
     def compute_top_center_geometry(self, width: int, height: int) -> QRect:
         """Calculate top-center QRect on selected screen work area with TOP_OFFSET_PX margin."""
@@ -484,17 +574,17 @@ class MainWindow(FramelessWindow):
 
 
     def _create_default_art_pixmap(self) -> QPixmap:
-        """Generate a clean 72x72 default placeholder pixmap for missing artwork."""
-        pixmap = QPixmap(72, 72)
-        pixmap.fill(QColor("#313244"))
-        painter = QPainter(pixmap)
+        """Generate a crisp 92x92 rounded default placeholder pixmap matching DeskNotch card art."""
+        base = QPixmap(92, 92)
+        base.fill(QColor(255, 255, 255, 16))
+        painter = QPainter(base)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QColor("#CDD6F4"))
-        font = QFont("Segoe UI", 24, QFont.Weight.Bold)
+        painter.setPen(QColor(255, 255, 255, 170))
+        font = QFont("Segoe UI", 28, QFont.Weight.Bold)
         painter.setFont(font)
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "♪")
+        painter.drawText(base.rect(), Qt.AlignmentFlag.AlignCenter, "♪")
         painter.end()
-        return pixmap
+        return create_rounded_pixmap(base, 92, radius=12.0)
 
     def _on_fade_anim_finished(self) -> None:
         """Ensure widget opacity is restored to 1.0 upon animation completion."""
@@ -565,126 +655,150 @@ class MainWindow(FramelessWindow):
         self._notch_widget = self._capsule_widget
         root_layout.addWidget(self._capsule_widget)
 
-        # 2. Expanded Card Container Widget
+        # 2. Expanded Card Container Widget (DeskNotch Layout)
         self._expanded_widget = QWidget(self)
         expanded_layout = QVBoxLayout(self._expanded_widget)
-        expanded_layout.setContentsMargins(15, 12, 15, 12)
-        expanded_layout.setSpacing(8)
+        expanded_layout.setContentsMargins(20, 12, 20, 12)
+        expanded_layout.setSpacing(6)
 
-        # Top section: Album Art + Meta & Transport Controls
-        top_layout = QHBoxLayout()
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(12)
+        # Frosted Inner Glass Media Tile (DeskNotch Tile surface)
+        self._media_tile_frame = QFrame(self._expanded_widget)
+        self._media_tile_frame.setObjectName("MediaTile")
+        self._media_tile_frame.setStyleSheet(
+            "QFrame#MediaTile {"
+            "  background-color: rgba(255, 255, 255, 0.04);"
+            "  border: 1px solid rgba(255, 255, 255, 0.08);"
+            "  border-radius: 16px;"
+            "}"
+        )
+        tile_layout = QHBoxLayout(self._media_tile_frame)
+        tile_layout.setContentsMargins(10, 10, 10, 10)
+        tile_layout.setSpacing(12)
 
-        # Left Column: Album Art Thumbnail
-        self.art_label = QLabel(self._expanded_widget)
-        self.art_label.setFixedSize(72, 72)
+        # Left Column: Rounded Square Album Art Thumbnail (92x92, radius 12px)
+        self.art_label = QLabel(self._media_tile_frame)
+        self.art_label.setFixedSize(92, 92)
         self.art_label.setPixmap(self._default_art_pixmap)
-        self.art_label.setScaledContents(True)
-        self.art_label.setStyleSheet("border-radius: 8px; background-color: #313244;")
+        self.art_label.setScaledContents(False)
+        self.art_label.setStyleSheet("background: transparent; border: none;")
 
-        # Right Column: Track Info & Transport Buttons
+        # Right Column: Header Source Badge, Track Metadata, Transport Controls
         info_layout = QVBoxLayout()
         info_layout.setContentsMargins(0, 0, 0, 0)
-        info_layout.setSpacing(4)
+        info_layout.setSpacing(2)
         info_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        self.title_label = ElidedLabel("MediaDock", self._expanded_widget)
-        title_font = QFont("Segoe UI", 10, QFont.Weight.Bold)
-        self.title_label.setFont(title_font)
-        self.title_label.setStyleSheet("color: #FFFFFF;")
+        # Source Badge Row (Mini Mirrored Bars + Uppercase Player Name + Session Pill + Status Badge)
+        source_row = QHBoxLayout()
+        source_row.setContentsMargins(0, 0, 0, 1)
+        source_row.setSpacing(5)
+
+        self._visualizer = ReactiveVisualizerWidget(
+            bar_count=5, bar_color=self._current_accent, mirrored=True, parent=self._media_tile_frame
+        )
+        self._visualizer.setFixedSize(22, 11)
+
+        self.lbl_source = QLabel("MEDIADOCK", self._media_tile_frame)
+        src_font = QFont("Segoe UI", 7, QFont.Weight.Bold)
+        src_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.0)
+        self.lbl_source.setFont(src_font)
+        self.lbl_source.setStyleSheet("color: rgba(255, 255, 255, 0.45); background: transparent;")
+
+        self.status_label = QLabel("CLOSED", self._media_tile_frame)
+        status_font = QFont("Segoe UI", 7, QFont.Weight.Bold)
+        self.status_label.setFont(status_font)
+        text, text_hex, bg_hex = get_status_badge_style(PlaybackStatus.CLOSED)
+        self.status_label.setStyleSheet(
+            f"color: {text_hex}; background-color: {bg_hex}; border-radius: 4px; padding: 1px 5px;"
+        )
 
         # Active Session Switcher Pill
-        self.combo_sessions = QComboBox(self._expanded_widget)
-        self.combo_sessions.setFixedSize(80, 20)
+        self.combo_sessions = QComboBox(self._media_tile_frame)
+        self.combo_sessions.setFixedSize(72, 18)
         self.combo_sessions.setStyleSheet(
-            "QComboBox { background-color: #141414; color: #CDD6F4; border: 1px solid #2A2A2A; border-radius: 4px; font-size: 8px; padding: 1px 4px; }"
+            "QComboBox { background-color: rgba(255, 255, 255, 0.08); color: #FFFFFF; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 4px; font-size: 8px; padding: 1px 4px; }"
             "QComboBox::drop-down { border: none; width: 10px; }"
-            "QComboBox QAbstractItemView { background-color: #141414; color: #CDD6F4; selection-background-color: #2A2A2A; }"
+            "QComboBox QAbstractItemView { background-color: #141414; color: #FFFFFF; selection-background-color: #2A2A2A; }"
         )
         self.combo_sessions.currentIndexChanged.connect(self._on_session_combo_changed)
         self.combo_sessions.hide()
 
-        title_row = QHBoxLayout()
-        title_row.setContentsMargins(0, 0, 0, 0)
-        title_row.setSpacing(6)
-        title_row.addWidget(self.title_label, stretch=1)
-        title_row.addWidget(self.combo_sessions)
+        source_row.addWidget(self._visualizer)
+        source_row.addWidget(self.lbl_source)
+        source_row.addWidget(self.combo_sessions)
+        source_row.addStretch()
+        source_row.addWidget(self.status_label)
 
-        self.artist_label = ElidedLabel("No Media Playing", self._expanded_widget)
+        self.title_label = ElidedLabel("MediaDock", self._media_tile_frame)
+        title_font = QFont("Segoe UI", 11, QFont.Weight.Bold)
+        self.title_label.setFont(title_font)
+        self.title_label.setStyleSheet("color: #FFFFFF; background: transparent;")
+
+        self.artist_label = ElidedLabel("No Media Playing", self._media_tile_frame)
         sub_font = QFont("Segoe UI", 9)
         self.artist_label.setFont(sub_font)
-        self.artist_label.setStyleSheet("color: #A6ADC8;")
+        self.artist_label.setStyleSheet("color: rgba(255, 255, 255, 0.55); background: transparent;")
 
         # Synchronized Lyrics Line
-        self.lyrics_label = ElidedLabel("", self._expanded_widget)
+        self.lyrics_label = ElidedLabel("", self._media_tile_frame)
         lyrics_font = QFont("Segoe UI", 8)
         lyrics_font.setItalic(True)
         self.lyrics_label.setFont(lyrics_font)
-        self.lyrics_label.setStyleSheet("color: #00FF7F;")
+        self.lyrics_label.setStyleSheet("color: #00FF7F; background: transparent;")
         self.lyrics_label.hide()
 
-        self.status_label = QLabel("CLOSED", self._expanded_widget)
-        status_font = QFont("Segoe UI", 8, QFont.Weight.Bold)
-        self.status_label.setFont(status_font)
-        text, text_hex, bg_hex = get_status_badge_style(PlaybackStatus.CLOSED)
-        self.status_label.setStyleSheet(
-            f"color: {text_hex}; background-color: {bg_hex}; border-radius: 4px; padding: 2px 6px;"
-        )
-
-        # Reactive Visualizer (Mirrored symmetrical expansion)
-        self._visualizer = ReactiveVisualizerWidget(bar_count=5, mirrored=True, parent=self._expanded_widget)
-
-        # Transport Controls Row
+        # DeskNotch Transport Controls Row
         controls_layout = QHBoxLayout()
-        controls_layout.setContentsMargins(0, 2, 0, 0)
-        controls_layout.setSpacing(6)
-        controls_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        controls_layout.setContentsMargins(0, 4, 0, 0)
+        controls_layout.setSpacing(4)
+        controls_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        btn_style = get_button_stylesheet()
+        icon_btn_qss = get_desknotch_icon_button_stylesheet()
+        play_btn_qss = get_desknotch_play_button_stylesheet()
 
-        self.btn_prev = QPushButton(self._expanded_widget)
-        self.btn_prev.setFixedSize(26, 24)
-        self.btn_prev.setStyleSheet(btn_style)
-        self.btn_prev.setIcon(get_svg_icon("previous", 13, QColor("#CDD6F4")))
+        self.btn_prev = QPushButton(self._media_tile_frame)
+        self.btn_prev.setFixedSize(26, 26)
+        self.btn_prev.setStyleSheet(icon_btn_qss)
+        self.btn_prev.setIcon(get_svg_icon("previous", 14, QColor("#E0E0E0")))
         self.btn_prev.clicked.connect(self._on_btn_prev_clicked)
 
-        self.btn_play_pause = QPushButton(self._expanded_widget)
-        self.btn_play_pause.setFixedSize(32, 24)
-        self.btn_play_pause.setStyleSheet(btn_style)
-        self.btn_play_pause.setIcon(get_svg_icon("play", 13, QColor("#CDD6F4")))
+        # Signature DeskNotch solid white circular Play/Pause disc with pitch-black glyph
+        self.btn_play_pause = QPushButton(self._media_tile_frame)
+        self.btn_play_pause.setFixedSize(34, 34)
+        self.btn_play_pause.setStyleSheet(play_btn_qss)
+        self.btn_play_pause.setIcon(get_svg_icon("play", 16, QColor("#000000")))
         self.btn_play_pause.clicked.connect(self._on_btn_play_pause_clicked)
 
-        self.btn_next = QPushButton(self._expanded_widget)
-        self.btn_next.setFixedSize(26, 24)
-        self.btn_next.setStyleSheet(btn_style)
-        self.btn_next.setIcon(get_svg_icon("next", 13, QColor("#CDD6F4")))
+        self.btn_next = QPushButton(self._media_tile_frame)
+        self.btn_next.setFixedSize(26, 26)
+        self.btn_next.setStyleSheet(icon_btn_qss)
+        self.btn_next.setIcon(get_svg_icon("next", 14, QColor("#E0E0E0")))
         self.btn_next.clicked.connect(self._on_btn_next_clicked)
 
         # Shuffle & Repeat Toggles
-        self.btn_shuffle = QPushButton(self._expanded_widget)
+        self.btn_shuffle = QPushButton(self._media_tile_frame)
         self.btn_shuffle.setFixedSize(24, 24)
-        self.btn_shuffle.setStyleSheet(btn_style)
-        self.btn_shuffle.setIcon(get_svg_icon("shuffle", 12, QColor("#CDD6F4")))
+        self.btn_shuffle.setStyleSheet(icon_btn_qss)
+        self.btn_shuffle.setIcon(get_svg_icon("shuffle", 12, QColor(255, 255, 255, 165)))
         self.btn_shuffle.clicked.connect(self._on_btn_shuffle_clicked)
 
-        self.btn_repeat = QPushButton(self._expanded_widget)
+        self.btn_repeat = QPushButton(self._media_tile_frame)
         self.btn_repeat.setFixedSize(24, 24)
-        self.btn_repeat.setStyleSheet(btn_style)
-        self.btn_repeat.setIcon(get_svg_icon("repeat", 12, QColor("#CDD6F4")))
+        self.btn_repeat.setStyleSheet(icon_btn_qss)
+        self.btn_repeat.setIcon(get_svg_icon("repeat", 12, QColor(255, 255, 255, 165)))
         self.btn_repeat.clicked.connect(self._on_btn_repeat_clicked)
 
-        # Master Volume & Mute Controls
-        self.btn_mute = QPushButton(self._expanded_widget)
+        # Volume & Mute Controls
+        self.btn_mute = QPushButton(self._media_tile_frame)
         self.btn_mute.setFixedSize(24, 24)
-        self.btn_mute.setStyleSheet(btn_style)
-        self.btn_mute.setIcon(get_svg_icon("volume", 13, QColor("#CDD6F4")))
+        self.btn_mute.setStyleSheet(icon_btn_qss)
+        self.btn_mute.setIcon(get_svg_icon("volume", 13, QColor(255, 255, 255, 165)))
         self.btn_mute.clicked.connect(self._on_btn_mute_clicked)
 
-        self.slider_volume = QSlider(Qt.Orientation.Horizontal, self._expanded_widget)
+        self.slider_volume = QSlider(Qt.Orientation.Horizontal, self._media_tile_frame)
         self.slider_volume.setRange(0, 100)
         self.slider_volume.setValue(100)
-        self.slider_volume.setFixedWidth(50)
+        self.slider_volume.setFixedWidth(40)
         self.slider_volume.setStyleSheet(get_slider_stylesheet(self._current_accent))
         self.slider_volume.valueChanged.connect(self._on_volume_slider_changed)
 
@@ -695,31 +809,30 @@ class MainWindow(FramelessWindow):
         controls_layout.addWidget(self.btn_repeat)
         controls_layout.addWidget(self.btn_mute)
         controls_layout.addWidget(self.slider_volume)
-        controls_layout.addWidget(self._visualizer)
-        controls_layout.addWidget(self.status_label)
 
-        info_layout.addLayout(title_row)
+        info_layout.addLayout(source_row)
+        info_layout.addWidget(self.title_label)
         info_layout.addWidget(self.artist_label)
         info_layout.addWidget(self.lyrics_label)
         info_layout.addLayout(controls_layout)
 
-        top_layout.addWidget(self.art_label)
-        top_layout.addLayout(info_layout)
+        tile_layout.addWidget(self.art_label)
+        tile_layout.addLayout(info_layout)
 
-        # Bottom section: Progress Bar & Position Labels
+        # Bottom Section: Interactive Timeline Scrub Bar + DeskNotch Mini Dock (Pin & Settings)
         progress_layout = QHBoxLayout()
-        progress_layout.setContentsMargins(0, 0, 0, 0)
-        progress_layout.setSpacing(8)
+        progress_layout.setContentsMargins(4, 0, 4, 0)
+        progress_layout.setSpacing(6)
 
         time_font = QFont("Segoe UI", 8)
 
         self.lbl_position = QLabel("00:00", self._expanded_widget)
         self.lbl_position.setFont(time_font)
-        self.lbl_position.setStyleSheet("color: #A6ADC8;")
+        self.lbl_position.setStyleSheet("color: rgba(255, 255, 255, 0.50);")
 
         self.lbl_duration = QLabel("00:00", self._expanded_widget)
         self.lbl_duration.setFont(time_font)
-        self.lbl_duration.setStyleSheet("color: #A6ADC8;")
+        self.lbl_duration.setStyleSheet("color: rgba(255, 255, 255, 0.50);")
 
         self.progress_slider = InteractiveScrubSlider(Qt.Orientation.Horizontal, self._expanded_widget)
         self.progress_slider.setRange(0, 0)
@@ -731,11 +844,29 @@ class MainWindow(FramelessWindow):
         self.progress_slider.sliderMoved.connect(self._on_slider_moved)
         self.progress_slider.sliderReleased.connect(self._on_slider_released)
 
+        # DeskNotch Action Dock Buttons (Pin/Lock & Settings)
+        self.btn_pin = QPushButton(self._expanded_widget)
+        self.btn_pin.setFixedSize(24, 24)
+        self.btn_pin.setCheckable(True)
+        self.btn_pin.setToolTip("Pin Notch Open")
+        self.btn_pin.setStyleSheet(icon_btn_qss)
+        self.btn_pin.setIcon(get_svg_icon("pin", 12, QColor(255, 255, 255, 165)))
+        self.btn_pin.toggled.connect(self._on_btn_pin_toggled)
+
+        self.btn_settings = QPushButton(self._expanded_widget)
+        self.btn_settings.setFixedSize(24, 24)
+        self.btn_settings.setToolTip("Settings")
+        self.btn_settings.setStyleSheet(icon_btn_qss)
+        self.btn_settings.setIcon(get_svg_icon("settings", 12, QColor(255, 255, 255, 165)))
+        self.btn_settings.clicked.connect(lambda: self.open_settings_requested.emit())
+
         progress_layout.addWidget(self.lbl_position)
         progress_layout.addWidget(self.progress_slider)
         progress_layout.addWidget(self.lbl_duration)
+        progress_layout.addWidget(self.btn_pin)
+        progress_layout.addWidget(self.btn_settings)
 
-        expanded_layout.addLayout(top_layout)
+        expanded_layout.addWidget(self._media_tile_frame, stretch=1)
         expanded_layout.addLayout(progress_layout)
 
         root_layout.addWidget(self._expanded_widget)
@@ -792,6 +923,15 @@ class MainWindow(FramelessWindow):
     def _on_btn_mute_clicked(self) -> None:
         if self._media_core:
             self._media_core.toggle_mute()
+
+    def _on_btn_pin_toggled(self, checked: bool) -> None:
+        """Pin or unpin expanded notch open (prevents collapse timeout on mouse leave)."""
+        self._is_pinned = checked
+        icon_name = "pin_active" if checked else "pin"
+        color = QColor("#FFFFFF") if checked else QColor(255, 255, 255, 165)
+        self.btn_pin.setIcon(get_svg_icon(icon_name, 12, color))
+        if checked and self._collapse_timer.isActive():
+            self._collapse_timer.stop()
 
     def _on_session_combo_changed(self, index: int) -> None:
         """Slot for session selector combo change."""
@@ -905,13 +1045,30 @@ class MainWindow(FramelessWindow):
             try:
                 sess = self._media_core.get_active_session_info()
                 if sess:
-                    source_name = getattr(sess, "display_name", "") or getattr(sess, "app_id", "") or ""
+                    cand_disp = getattr(sess, "display_name", "")
+                    cand_app = getattr(sess, "app_id", "")
+                    if isinstance(cand_disp, str) and cand_disp:
+                        source_name = cand_disp
+                    elif isinstance(cand_app, str) and cand_app:
+                        source_name = cand_app
             except Exception:
                 pass
-        if not source_name and track and hasattr(track, "app_id") and track.app_id:
+        if not source_name and track and hasattr(track, "app_id") and isinstance(track.app_id, str) and track.app_id:
             source_name = track.app_id
 
         self._capsule_widget.set_source_info(source_name, str(track.title), str(track.artist))
+        self._capsule_widget.set_album_thumbnail(track.album_art_bytes)
+
+        # Format uppercase DeskNotch source label ("SPOTIFY", "YOUTUBE", "VLC", etc.)
+        src_key = classify_media_source(source_name, str(track.title), str(track.artist))
+        pretty_map = {
+            "spotify": "SPOTIFY",
+            "youtube": "YOUTUBE",
+            "vlc": "VLC",
+            "default_media": source_name.split("!")[0].replace(".exe", "").upper() if source_name else "MEDIADOCK",
+        }
+        self._current_source_display = str(pretty_map.get(src_key, "MEDIADOCK") or "MEDIADOCK")
+        self._refresh_source_label()
 
         # Update expanded card metadata
         self.title_label.setText(track.title)
@@ -925,8 +1082,11 @@ class MainWindow(FramelessWindow):
         # Dynamic album art accent extraction & styling
         self._current_accent = extract_dominant_color(track.album_art_bytes)
         self.progress_slider.setStyleSheet(get_slider_stylesheet(self._current_accent))
+        self.slider_volume.setStyleSheet(get_slider_stylesheet(self._current_accent))
         self._capsule_widget.set_accent_color(self._current_accent)
         self._visualizer.set_bar_color(self._current_accent)
+        self.lyrics_label.setStyleSheet(f"color: {self._current_accent.name()}; background: transparent;")
+        self.update()
 
         # Timeline state update
         self._duration_ms = max(0, track.duration_ms)
@@ -946,10 +1106,23 @@ class MainWindow(FramelessWindow):
         # Trigger smooth opacity transition
         self._trigger_track_fade_animation()
 
+    def _refresh_source_label(self) -> None:
+        """Update uppercase tracked player header label ('SPOTIFY' vs 'PAUSED · SPOTIFY')."""
+        if not hasattr(self, "lbl_source"):
+            return
+        name = self._current_source_display or "MEDIADOCK"
+        if self._current_status == PlaybackStatus.PLAYING:
+            self.lbl_source.setText(name)
+        elif self._current_status == PlaybackStatus.PAUSED:
+            self.lbl_source.setText(f"PAUSED · {name}")
+        else:
+            self.lbl_source.setText(name)
+
     def on_audio_visualizer_updated(self, bars: list) -> None:
         """Slot for audio_visualizer_updated signal. Updates visualizer bar heights during active playback."""
         if self._current_status == PlaybackStatus.PLAYING:
             self._visualizer.set_bar_heights(bars)
+            self._capsule_widget.set_bar_heights(bars)
 
     def on_status_changed(self, status: PlaybackStatus) -> None:
         """Slot for playback_status_changed signal. Updates badge, capsule, and visualizer."""
@@ -957,19 +1130,29 @@ class MainWindow(FramelessWindow):
 
         self._capsule_widget.set_playback_status(status)
         self._visualizer.set_playback_status(status)
+        self._refresh_source_label()
 
         text, text_hex, bg_hex = get_status_badge_style(status)
         self.status_label.setText(text)
         self.status_label.setStyleSheet(
-            f"color: {text_hex}; background-color: {bg_hex}; border-radius: 4px; padding: 2px 6px;"
+            f"color: {text_hex}; background-color: {bg_hex}; border-radius: 4px; padding: 1px 5px;"
         )
 
         if status == PlaybackStatus.PLAYING:
-            self.btn_play_pause.setIcon(get_svg_icon("pause", 14, QColor("#CDD6F4")))
+            self.btn_play_pause.setIcon(get_svg_icon("pause", 16, QColor("#000000")))
             if self._duration_ms > 0 and not self._position_timer.isActive():
                 self._position_timer.start()
+            if (
+                self._settings_manager.get_dynamic_island_enabled()
+                and self._state == DynamicIslandState.HIDDEN
+                and not self._manually_hidden
+                and not self._suppressed_by_fullscreen
+            ):
+                self.set_state(DynamicIslandState.COLLAPSED)
+            elif self.isVisible():
+                self._enforce_topmost_zorder()
         elif status in (PlaybackStatus.PAUSED, PlaybackStatus.STOPPED, PlaybackStatus.CLOSED):
-            self.btn_play_pause.setIcon(get_svg_icon("play", 14, QColor("#CDD6F4")))
+            self.btn_play_pause.setIcon(get_svg_icon("play", 16, QColor("#000000")))
             if self._position_timer.isActive():
                 self._position_timer.stop()
             self._visualizer.clear_bar_heights()
@@ -982,9 +1165,13 @@ class MainWindow(FramelessWindow):
         self.progress_slider.setEnabled(available)
 
         if available:
+            self._manually_hidden = False
             if self._settings_manager.get_dynamic_island_enabled():
                 if self._state == DynamicIslandState.HIDDEN:
                     self.set_state(DynamicIslandState.COLLAPSED)
+                elif not self.isVisible() and not self._suppressed_by_fullscreen:
+                    self.show()
+                self._enforce_topmost_zorder()
         else:
             if self._position_timer.isActive():
                 self._position_timer.stop()
@@ -994,17 +1181,11 @@ class MainWindow(FramelessWindow):
             self.set_state(DynamicIslandState.HIDDEN)
 
     def _update_album_art(self, art_bytes: Optional[bytes]) -> None:
-        """Load raw image bytes into QPixmap in memory without disk files."""
+        """Load raw image bytes into rounded 92x92 QPixmap matching DeskNotch artwork tile."""
         if art_bytes:
             pixmap = QPixmap()
             if pixmap.loadFromData(art_bytes):
-                scaled = pixmap.scaled(
-                    72,
-                    72,
-                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-                self.art_label.setPixmap(scaled)
+                self.art_label.setPixmap(create_rounded_pixmap(pixmap, 92, radius=12.0))
                 return
         self.art_label.setPixmap(self._default_art_pixmap)
 

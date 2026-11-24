@@ -679,12 +679,21 @@ class GSMTCProvider(BaseMediaProvider):
             status_val = getattr(info, "playback_status", None)
             mapped_status = self._map_playback_status(status_val)
 
-            # Read shuffle and repeat state
-            if hasattr(info, "is_shuffle_active"):
-                self._is_shuffle_active = info.is_shuffle_active
-            if hasattr(info, "auto_repeat_mode"):
-                mode = info.auto_repeat_mode
-                self._auto_repeat_mode = mode.value if hasattr(mode, "value") else int(mode or 0)
+            # Safely read optional shuffle and repeat state without disrupting playback status
+            try:
+                if hasattr(info, "is_shuffle_active"):
+                    val = info.is_shuffle_active
+                    self._is_shuffle_active = bool(val) if val is not None else None
+                if hasattr(info, "auto_repeat_mode"):
+                    mode = info.auto_repeat_mode
+                    if mode is None:
+                        self._auto_repeat_mode = 0
+                    elif hasattr(mode, "value"):
+                        self._auto_repeat_mode = int(mode.value)
+                    else:
+                        self._auto_repeat_mode = int(mode)
+            except Exception:
+                pass
 
             self._update_playback_status(mapped_status)
         except Exception as e:

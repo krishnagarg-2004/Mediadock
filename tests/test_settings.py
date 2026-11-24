@@ -229,6 +229,8 @@ class TestSettingsManager(unittest.TestCase):
         self.settings.set_hover_intent_delay_ms(250)
         self.assertEqual(self.settings.get_hover_intent_delay_ms(), 250)
 
+        self.assertFalse(self.settings.get_fullscreen_auto_hide())
+        self.settings.set_fullscreen_auto_hide(True)
         self.assertTrue(self.settings.get_fullscreen_auto_hide())
         self.settings.set_fullscreen_auto_hide(False)
         self.assertFalse(self.settings.get_fullscreen_auto_hide())

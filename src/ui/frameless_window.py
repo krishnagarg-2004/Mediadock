@@ -1,12 +1,57 @@
-"""Frameless window base class with rounded corners, translucent background, and drag support."""
+"""Frameless window base class with DeskNotch obsidian glass shell, flared concave top ears, and rounded bottom corners."""
 
 from typing import Optional
-from PySide6.QtCore import Qt, QPoint
-from PySide6.QtGui import QMouseEvent, QPaintEvent, QPainter, QPainterPath, QColor, QGuiApplication, QScreen
+from PySide6.QtCore import Qt, QPoint, QRectF
+from PySide6.QtGui import (
+    QMouseEvent,
+    QPaintEvent,
+    QPainter,
+    QPainterPath,
+    QColor,
+    QGuiApplication,
+    QLinearGradient,
+    QPen,
+)
 from PySide6.QtWidgets import QWidget
 
 
 SNAP_THRESHOLD_PX = 15
+
+
+def build_desknotch_path(
+    rect: QRectF,
+    bottom_radius: float = 16.0,
+    ear_radius: float = 8.0,
+) -> QPainterPath:
+    """Construct MacBook / DeskNotch silhouette with top flared concave ears and bottom convex curves."""
+    x0, y0 = rect.left(), rect.top()
+    x1, y1 = rect.right(), rect.bottom()
+    ear = min(float(ear_radius), max(0.0, (rect.width() - 4.0) / 4.0), max(0.0, rect.height() / 3.0))
+    r = min(float(bottom_radius), max(0.0, (rect.width() - 2.0 * ear) / 2.0), max(0.0, rect.height() - ear))
+
+    path = QPainterPath()
+    if ear > 0.5:
+        path.moveTo(x0, y0)
+        path.lineTo(x1, y0)
+        # Right inverted concave ear transitioning smoothly to vertical notch wall
+        path.quadTo(x1 - ear, y0, x1 - ear, y0 + ear)
+        path.lineTo(x1 - ear, y1 - r)
+        path.quadTo(x1 - ear, y1, x1 - ear - r, y1)
+        path.lineTo(x0 + ear + r, y1)
+        path.quadTo(x0 + ear, y1, x0 + ear, y1 - r)
+        path.lineTo(x0 + ear, y0 + ear)
+        # Left inverted concave ear flaring outward to top bezel
+        path.quadTo(x0 + ear, y0, x0, y0)
+        path.closeSubpath()
+    else:
+        path.moveTo(x0, y0)
+        path.lineTo(x1, y0)
+        path.lineTo(x1, y1 - r)
+        path.quadTo(x1, y1, x1 - r, y1)
+        path.lineTo(x0 + r, y1)
+        path.quadTo(x0, y1, x0, y1 - r)
+        path.closeSubpath()
+    return path
 
 
 class FramelessWindow(QWidget):
@@ -15,12 +60,14 @@ class FramelessWindow(QWidget):
     def __init__(
         self,
         parent: Optional[QWidget] = None,
-        border_radius: float = 16.0,
+        border_radius: float = 14.0,
+        ear_radius: float = 8.0,
         bg_color: QColor = QColor("#000000"),
         allow_drag: bool = True,
     ) -> None:
         super().__init__(parent)
         self._border_radius = border_radius
+        self._ear_radius = ear_radius
         self._bg_color = bg_color
         self._allow_drag = allow_drag
         self._drag_pos: Optional[QPoint] = None
@@ -103,25 +150,24 @@ class FramelessWindow(QWidget):
             super().mouseReleaseEvent(event)
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        """Paint an anti-aliased notch shape (flat top edge against screen bezel, rounded bottom corners) and subtle border."""
+        """Paint anti-aliased DeskNotch obsidian glass shell with top flared ears and edge light-catch."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        rect = self.rect().adjusted(0, 0, -1, -1)
-        r = float(self._border_radius)
-        path = QPainterPath()
-        path.moveTo(rect.left(), rect.top())
-        path.lineTo(rect.right(), rect.top())
-        path.lineTo(rect.right(), rect.bottom() - r)
-        path.quadTo(rect.right(), rect.bottom(), rect.right() - r, rect.bottom())
-        path.lineTo(rect.left() + r, rect.bottom())
-        path.quadTo(rect.left(), rect.bottom(), rect.left(), rect.bottom() - r)
-        path.closeSubpath()
+        rect = QRectF(self.rect()).adjusted(0.5, 0.0, -0.5, -0.5)
+        path = build_desknotch_path(rect, bottom_radius=self._border_radius, ear_radius=self._ear_radius)
 
+        # Obsidian black hardware shell base
         painter.fillPath(path, self._bg_color)
 
-        # Pure Black 1px border stroke (#000000)
-        from PySide6.QtGui import QPen
-        pen = QPen(QColor("#000000"), 1)
+        # DeskNotch layered translucent frost sheen (lighter at top edge)
+        sheen = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
+        sheen.setColorAt(0.0, QColor(255, 255, 255, 14))
+        sheen.setColorAt(0.45, QColor(255, 255, 255, 5))
+        sheen.setColorAt(1.0, QColor(255, 255, 255, 2))
+        painter.fillPath(path, sheen)
+
+        # Subtle hairline border stroke for definition against light/dark backgrounds
+        pen = QPen(QColor(255, 255, 255, 22), 1.0)
         painter.setPen(pen)
         painter.drawPath(path)

@@ -35,11 +35,11 @@ graph TD
     end
 
     subgraph "UI Layer (src/ui)"
-        FramelessWindow["FramelessWindow\n(Edge Snapping & Dragging)"]
-        MainWindow["MainWindow\n(Full 360x160 / Compact 180x40 Modes)"]
-        Visualizer["ReactiveVisualizerWidget\n(Real-Time Waveform Render)"]
+        FramelessWindow["FramelessWindow\n(DeskNotch Concave Ears & Glass Shell)"]
+        MainWindow["MainWindow\n(Expanded 380x174 / Collapsed 220x34 Notch)"]
+        Visualizer["ReactiveVisualizerWidget\n(Real-Time Mirrored FFT/RMS Waveform)"]
         SystemTrayIcon["SystemTrayIcon\n(Tray Menu & Source Selector)"]
-        SettingsDialog["SettingsDialog\n(Preferences UI)"]
+        SettingsDialog["SettingsDialog\n(Preferences & Equalizer UI)"]
         HotkeyMgr["GlobalHotkeyManager\n(Parsing, Rebinding & Rollback)"]
     end
 
@@ -97,13 +97,13 @@ graph TD
 ### 2.3 UI & Design System (`src/ui/`)
 - **`FramelessWindow`** (`src/ui/frameless_window.py`): Custom frameless container widget extending `QWidget`.
   - **Desktop Edge Snapping**: Evaluates `_apply_edge_snapping(raw_pos)` during `mouseMoveEvent` dragging. Snaps within a 15 px threshold against `QScreen.availableGeometry()` (respecting taskbars across multi-monitor setups and DPI scaling).
-- **`MainWindow`** (`src/ui/main_window.py`): Primary floating dock widget extending `FramelessWindow`.
-  - **Dynamic Island State Machine**: Manages authoritative presentation states (`HIDDEN`, `COLLAPSED` [180x40 px], `EXPANDED` [360x160 px]).
-  - **Top-Center Screen Anchoring & Geometry Lifecycle**: `update_top_center_position()` computes pixel-perfect top-center QRect on primary monitor work area (`availableGeometry()`) with `TOP_OFFSET_PX` (12px) margin. Guarantees `window.center().x() == primary_screen.center().x()` during initial launch (`showEvent`), during 180ms `OutCubic` pop-in/pop-out geometry animations, and after arbitrary repeated expand/collapse cycles.
-  - **Capsule Metadata Alignment & Expand Direction**: Locks `_capsule_widget.setFixedSize(180, 40)` upon collapse animation completion in `_on_geom_anim_finished()`, preserving `capsule.center().y() == 20.0` and `metadata_group.center().y() == 20.0` (MIDDLE and CENTER alignment). Morphing during `COLLAPSED → EXPANDED` scales layout bounds symmetrically around center X = 960 while preserving `EXPANDED → COLLAPSED` collapse animation behavior intact.
-  - **Hover & Collapse Timer Lifecycle**: Mouse hover triggers pop-out expansion (`set_state(EXPANDED)`); mouse leave starts single-shot `QTimer` (`collapse_delay_ms`) returning to `COLLAPSED` state.
-- **`ElidedLabel`** (`src/ui/components.py`): Custom `QLabel` subclass that dynamically formats overflowing text using `QFontMetrics.elidedText(..., Qt.ElideRight, width)`.
-- **Theme System** (`src/ui/theme.py`): Catppuccin Mocha palette (`COLOR_BG_BASE = #1E1E2E`, `COLOR_TEXT_PRIMARY = #CDD6F4`, `COLOR_ACCENT_BLUE = #89B4FA`, etc.) with dynamic album-art dominant color extraction.
+- **`MainWindow`** (`src/ui/main_window.py`): Primary top-center DeskNotch dock extending `FramelessWindow`.
+  - **Dynamic Island State Machine**: Manages authoritative presentation states (`HIDDEN`, `COLLAPSED` [220x34 px], `EXPANDED` [380x174 px]).
+  - **Top-Center Screen Anchoring & Geometry Lifecycle**: `update_top_center_position()` computes pixel-perfect top-center `QRect` on the selected monitor work area (`availableGeometry()`) with `TOP_OFFSET_PX = 0` flush against the screen bezel and `HWND_TOPMOST` Z-order promotion. Guarantees constant center X alignment during launch, 180ms `OutCubic` pop-in/pop-out geometry animations, and repeated expand/collapse cycles.
+  - **Notch Metadata Alignment & Expand Direction**: Locks `_capsule_widget.setFixedSize(220, 34)` upon collapse animation completion in `_on_geom_anim_finished()`, preserving vertical center alignment (`center().y() == 17.0`). Morphing during `COLLAPSED → EXPANDED` scales layout bounds symmetrically around the screen center X coordinate.
+  - **Hover/Click Trigger, Pinning & Collapse Timer**: Configurable `expand_trigger` (`hover` with intent delay or `click`), `btn_pin` lock toggle to hold the card open, and `QTimer` (`collapse_delay_ms`) for automatic collapse.
+- **`ElidedLabel` & `InteractiveScrubSlider`** (`src/ui/components.py`): Dynamic elided labels and click-to-seek progress slider with hover timestamp tooltips.
+- **Theme System** (`src/ui/theme.py`): Fixed Pure Black / Obsidian palette (`#000000`, `#0B0B0D`, `#00FF7F`, `#C1121C`) paired with dynamic album-art color extraction (`extract_dominant_color`) for radial ambient card glow and visualizer tinting.
 
 ### 2.4 System Tray Component (`src/ui/system_tray.py`)
 - **`SystemTrayIcon`**: Subclass of `QSystemTrayIcon` featuring:

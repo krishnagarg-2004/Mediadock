@@ -38,6 +38,11 @@ class TestSvgIconsAndVisualBaseline(unittest.TestCase):
             "next",
             "volume",
             "mute",
+            "shuffle",
+            "repeat",
+            "pin",
+            "pin_active",
+            "settings",
             "spotify",
             "youtube",
             "vlc",
@@ -65,11 +70,11 @@ class TestSvgIconsAndVisualBaseline(unittest.TestCase):
         self.assertFalse(icon.isNull())
 
     def test_capsule_pure_black_background(self) -> None:
-        """Verify CollapsedCapsuleWidget background color is pure black #000000."""
+        """Verify CollapsedCapsuleWidget background color is pure black #000000 and 220x34 DeskNotch dimensions."""
         capsule = CollapsedCapsuleWidget()
         self.assertEqual(capsule._bg_color.name(), "#000000")
-        self.assertEqual(capsule.width(), 180)
-        self.assertEqual(capsule.height(), 40)
+        self.assertEqual(capsule.width(), 220)
+        self.assertEqual(capsule.height(), 34)
 
     def test_capsule_status_dot_colors(self) -> None:
         """Verify status dot sets GREEN (#00FF7F) for PLAYING and RED (#C1121C) for INACTIVE."""
@@ -106,14 +111,14 @@ class TestSvgIconsAndVisualBaseline(unittest.TestCase):
         self.assertEqual(capsule.title_label.full_text(), "Movie.mkv")
 
     def test_expanded_pure_black_background(self) -> None:
-        """Verify MainWindow / FramelessWindow background is pure black #000000 and 360x160 px when expanded."""
+        """Verify MainWindow / FramelessWindow background is pure black #000000 and 380x174 px DeskNotch size when expanded."""
         window = MainWindow()
         window.set_state(window.DynamicIslandState.EXPANDED if hasattr(window, "DynamicIslandState") else None)
         from src.ui.main_window import DynamicIslandState
         window.set_state(DynamicIslandState.EXPANDED)
         self.assertEqual(window._bg_color.name(), "#000000")
-        self.assertEqual(window.width(), 360)
-        self.assertEqual(window.height(), 160)
+        self.assertEqual(window.width(), 380)
+        self.assertEqual(window.height(), 174)
 
     def test_media_controls_functional_with_svg_icons(self) -> None:
         """Verify transport control buttons have valid SVG icons attached and fire click slots."""

@@ -1,8 +1,8 @@
 import os
 import sys
 from typing import Optional
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
+from PySide6.QtCore import Qt, QRectF
+from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPainterPath, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
 from src.core.models import PlaybackStatus
@@ -10,6 +10,8 @@ from src.core.models import PlaybackStatus
 # --- Design Tokens & Centralized Color Architecture ---
 COLOR_BG_ISLAND = QColor("#000000")  # Pure Black baseline for capsule & expanded card
 COLOR_BORDER_ISLAND = QColor("#000000")  # Pure Black border baseline
+COLOR_NOTCH_SHELL = QColor("#0B0B0D")  # DeskNotch obsidian surface fill
+COLOR_NOTCH_BORDER = QColor(255, 255, 255, 22)  # DeskNotch subtle top-edge light catch
 COLOR_STATUS_ACTIVE = QColor("#00FF7F")  # System-defined GREEN (#00FF7F) for active playing status
 COLOR_STATUS_INACTIVE = QColor("#C1121C")  # System-defined RED (#C1121C) for inactive/paused status
 
@@ -171,9 +173,85 @@ def get_slider_stylesheet(accent: QColor = COLOR_ACCENT_GREEN) -> str:
     """Return QSS stylesheet for progress slider using specified accent color."""
     accent_hex = accent.name()
     return (
-        f"QSlider::groove:horizontal {{ height: 4px; background: #222222; border-radius: 2px; }}"
-        f"QSlider::sub-page:horizontal {{ background: {accent_hex}; border-radius: 2px; }}"
-        f"QSlider::handle:horizontal {{ background: #FFFFFF; width: 10px; margin-top: -3px; margin-bottom: -3px; border-radius: 5px; }}"
-        f"QSlider::handle:horizontal:hover {{ background: {accent_hex}; }}"
+        f"QSlider::groove:horizontal {{ height: 3px; background: rgba(255, 255, 255, 0.16); border-radius: 1px; }}"
+        f"QSlider::sub-page:horizontal {{ background: {accent_hex}; border-radius: 1px; }}"
+        f"QSlider::handle:horizontal {{ background: #FFFFFF; width: 10px; height: 10px; margin-top: -3.5px; margin-bottom: -3.5px; border-radius: 5px; }}"
+        f"QSlider::handle:horizontal:hover {{ background: #FFFFFF; width: 12px; height: 12px; margin-top: -4.5px; margin-bottom: -4.5px; border-radius: 6px; }}"
         f"QSlider::disabled {{ opacity: 0.4; }}"
     )
+
+
+def get_desknotch_play_button_stylesheet() -> str:
+    """Return QSS for DeskNotch's signature solid white circular Play/Pause disc button."""
+    return (
+        "QPushButton {"
+        "  background-color: #FFFFFF;"
+        "  color: #000000;"
+        "  border: none;"
+        "  border-radius: 17px;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: rgba(255, 255, 255, 0.9);"
+        "}"
+        "QPushButton:pressed {"
+        "  background-color: rgba(255, 255, 255, 0.78);"
+        "}"
+        "QPushButton:disabled {"
+        "  background-color: rgba(255, 255, 255, 0.3);"
+        "}"
+    )
+
+
+def get_desknotch_icon_button_stylesheet() -> str:
+    """Return QSS for minimalist DeskNotch circular hover transport/dock buttons."""
+    return (
+        "QPushButton {"
+        "  background-color: transparent;"
+        "  color: rgba(255, 255, 255, 0.65);"
+        "  border: none;"
+        "  border-radius: 13px;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: rgba(255, 255, 255, 0.10);"
+        "  color: #FFFFFF;"
+        "}"
+        "QPushButton:pressed {"
+        "  background-color: rgba(255, 255, 255, 0.18);"
+        "}"
+        "QPushButton:checked {"
+        "  background-color: rgba(255, 255, 255, 0.16);"
+        "  color: #FFFFFF;"
+        "}"
+    )
+
+
+def create_rounded_pixmap(pixmap: QPixmap, size: int, radius: float = 12.0) -> QPixmap:
+    """Return a crisp aspect-filled QPixmap clipped to anti-aliased rounded corners."""
+    if pixmap.isNull() or size <= 0:
+        out = QPixmap(max(1, size), max(1, size))
+        out.fill(Qt.GlobalColor.transparent)
+        return out
+
+    scaled = pixmap.scaled(
+        size,
+        size,
+        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    # Center crop if aspect ratio expanded past target square
+    if scaled.width() > size or scaled.height() > size:
+        x_off = max(0, (scaled.width() - size) // 2)
+        y_off = max(0, (scaled.height() - size) // 2)
+        scaled = scaled.copy(x_off, y_off, size, size)
+
+    rounded = QPixmap(size, size)
+    rounded.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(rounded)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(0, 0, size, size), radius, radius)
+    painter.setClipPath(path)
+    painter.drawPixmap(0, 0, scaled)
+    painter.end()
+    return rounded

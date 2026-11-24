@@ -57,11 +57,11 @@ class TestDynamicIslandComponents(unittest.TestCase):
         vis.repaint()
 
     def test_capsule_creation_and_dimensions(self) -> None:
-        """Verify CollapsedCapsuleWidget initializes independently with target 180x40 dimensions."""
+        """Verify CollapsedCapsuleWidget initializes independently with DeskNotch 220x34 dimensions."""
         capsule = CollapsedCapsuleWidget()
-        self.assertEqual(capsule.size(), QSize(180, 40))
-        self.assertEqual(capsule.minimumSize(), QSize(180, 40))
-        self.assertEqual(capsule.maximumSize(), QSize(180, 40))
+        self.assertEqual(capsule.size(), QSize(220, 34))
+        self.assertEqual(capsule.minimumSize(), QSize(220, 34))
+        self.assertEqual(capsule.maximumSize(), QSize(220, 34))
 
     def test_capsule_content_updates(self) -> None:
         """Verify track title, app icon, status dot, and accent color update cleanly."""

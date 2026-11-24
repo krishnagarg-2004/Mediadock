@@ -43,12 +43,12 @@ class TestMediaDockWindow(unittest.TestCase):
         self.assertEqual(window.height(), EXPANDED_SIZE[1])
 
     def test_artwork_label_dimensions(self) -> None:
-        """Verify art_label fixed dimensions (72x72) and default pixmap match."""
+        """Verify art_label fixed dimensions (92x92) and default pixmap match DeskNotch tile art."""
         window = MainWindow()
-        self.assertEqual(window.art_label.width(), 72)
-        self.assertEqual(window.art_label.height(), 72)
-        self.assertEqual(window._default_art_pixmap.width(), 72)
-        self.assertEqual(window._default_art_pixmap.height(), 72)
+        self.assertEqual(window.art_label.width(), 92)
+        self.assertEqual(window.art_label.height(), 92)
+        self.assertEqual(window._default_art_pixmap.width(), 92)
+        self.assertEqual(window._default_art_pixmap.height(), 92)
 
     def test_close_event_hides_window_when_close_to_tray_enabled(self) -> None:
         """Verify closeEvent ignores close and calls hide() when close_to_tray setting is True."""

@@ -69,29 +69,29 @@ class TestTopCenterPositioning(unittest.TestCase):
 
     @patch("PySide6.QtGui.QGuiApplication.primaryScreen")
     def test_compute_top_center_collapsed_geometry(self, mock_primary_screen) -> None:
-        """Verify compute_top_center_collapsed_geometry centers 180x40 at top work area + TOP_OFFSET_PX."""
+        """Verify compute_top_center_collapsed_geometry centers DeskNotch collapsed bar at top work area + TOP_OFFSET_PX."""
         mock_screen = MagicMock()
         mock_screen.availableGeometry.return_value = QRect(0, 0, 1920, 1080)
         mock_primary_screen.return_value = mock_screen
 
         rect = self.window.compute_top_center_collapsed_geometry()
-        expected_x = (1920 - COLLAPSED_SIZE[0]) // 2  # (1920 - 180) // 2 = 870
+        expected_x = (1920 - COLLAPSED_SIZE[0]) // 2
         expected_y = TOP_OFFSET_PX
 
-        self.assertEqual(rect, QRect(expected_x, expected_y, 180, 40))
+        self.assertEqual(rect, QRect(expected_x, expected_y, COLLAPSED_SIZE[0], COLLAPSED_SIZE[1]))
 
     @patch("PySide6.QtGui.QGuiApplication.primaryScreen")
     def test_compute_top_center_expanded_geometry(self, mock_primary_screen) -> None:
-        """Verify compute_top_center_expanded_geometry centers 360x160 at top work area + TOP_OFFSET_PX."""
+        """Verify compute_top_center_expanded_geometry centers DeskNotch expanded card at top work area + TOP_OFFSET_PX."""
         mock_screen = MagicMock()
         mock_screen.availableGeometry.return_value = QRect(0, 0, 1920, 1080)
         mock_primary_screen.return_value = mock_screen
 
         rect = self.window.compute_top_center_expanded_geometry()
-        expected_x = (1920 - EXPANDED_SIZE[0]) // 2  # (1920 - 360) // 2 = 780
+        expected_x = (1920 - EXPANDED_SIZE[0]) // 2
         expected_y = TOP_OFFSET_PX
 
-        self.assertEqual(rect, QRect(expected_x, expected_y, 360, 160))
+        self.assertEqual(rect, QRect(expected_x, expected_y, EXPANDED_SIZE[0], EXPANDED_SIZE[1]))
 
     def test_position_not_restored_from_legacy_pos_x_pos_y_settings(self) -> None:
         """Verify window position always initializes at top-center position."""
@@ -224,7 +224,7 @@ class TestTopCenterPositioning(unittest.TestCase):
 
         self.assertEqual(post_cap_geom.width(), COLLAPSED_SIZE[0])
         self.assertEqual(post_cap_geom.height(), COLLAPSED_SIZE[1])
-        self.assertEqual(post_cap_cy, 20.0)
+        self.assertEqual(post_cap_cy, COLLAPSED_SIZE[1] / 2.0)
         self.assertEqual(post_title_cy, post_cap_cy)
         self.assertEqual(post_icon_cy, post_cap_cy)
         self.assertEqual(post_dot_cy, post_cap_cy)

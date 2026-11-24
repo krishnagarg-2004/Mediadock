@@ -172,11 +172,11 @@ class TestBugFixesPersistenceAndUI(unittest.TestCase):
         # Title alignment = Center
         self.assertEqual(capsule.title_label.alignment() & Qt.AlignmentFlag.AlignCenter, Qt.AlignmentFlag.AlignCenter)
 
-        # Vertical Center check
+        # Vertical Center check (half of 34px DeskNotch bar = 17.0)
         icon_y_center = capsule.icon_label.y() + capsule.icon_label.height() / 2.0
         dot_y_center = capsule.status_dot.y() + capsule.status_dot.height() / 2.0
-        self.assertAlmostEqual(icon_y_center, 20.0, delta=2.0)
-        self.assertAlmostEqual(dot_y_center, 20.0, delta=2.0)
+        self.assertAlmostEqual(icon_y_center, 17.0, delta=2.0)
+        self.assertAlmostEqual(dot_y_center, 17.0, delta=2.0)
 
 
 if __name__ == "__main__":

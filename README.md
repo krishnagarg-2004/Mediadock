@@ -10,7 +10,7 @@
 - **Platform**: Windows 10 / 11 (64-bit)
 - **Target Audience**: Windows desktop users desiring non-intrusive, ambient, universal media controls.
 
-MediaDock runs as a lightweight, background desktop utility that monitors system-wide audio and media playback in real-time. It stays silently hidden when no media is active and automatically presents a sleek top-center collapsed capsule when media playback is detected. When hovered, the capsule seamlessly expands into an interactive media card allowing users to view metadata (track title, artist, album art) and issue media commands (play/pause, skip, volume adjustment, mute) without disrupting desktop workflows.
+MediaDock runs as a lightweight, background desktop utility that monitors system-wide audio and media playback in real-time. It stays silently hidden when no media is active and automatically presents a sleek DeskNotch-styled top-center notch bar when media playback is detected. When triggered, the notch expands downward into an interactive frosted media card allowing users to view metadata (track title, artist, album art, live synchronized lyrics) and issue media commands (play/pause, skip, shuffle, repeat, interactive scrub seek, volume adjustment, mute) without disrupting desktop workflows.
 
 ### Universal Scope
 MediaDock integrates with any media application exposing the Windows GSMTC API:
@@ -45,30 +45,30 @@ MediaDock presents a top-center, non-draggable overlay anchored flush against th
                      Media detected
                            │
                            ▼
-              ┌──────────────────────────┐  (Flush with top screen bezel)
-              │     COLLAPSED NOTCH      │  (Top-Center Sleek Notch 180x40 px)
-              │ [Icon] Title — Artist  ● │  (Flat top edge, rounded bottom)
-              └────────────┬─────────────┘
-                           │
-                       Mouse hover
-                           │
-                           ▼
-              ┌──────────────────────────┐
-              │      EXPANDED NOTCH      │  (Interactive Media Card 360x160 px)
-              │  [Art] Meta / Controls   │  (Drop-down card from top bezel)
-              └────────────┬─────────────┘
-                           │
-                    Mouse leaves
-                           │
-                   Collapse Delay (ms)
-                           │
-                           ▼
-              ┌──────────────────────────┐
-              │     COLLAPSED NOTCH      │
-              └──────────────────────────┘
+              ┌──────────────────────────────┐  (Flush with top bezel + 8px flared ears)
+              │       COLLAPSED NOTCH        │  (DeskNotch Slim Bar 220x34 px, 14px radius)
+              │ [Art] Title   ▌▌▌ 12:45 ●    │  (Album thumb, pulse, 12h clock, status dot)
+              └──────────────┬───────────────┘
+                             │
+                   Hover / Click Trigger
+                             │
+                             ▼
+              ┌──────────────────────────────┐  (Flared 10px ears, 26px bottom radius)
+              │       EXPANDED NOTCH         │  (DeskNotch Frosted Card 380x174 px)
+              │  [92px Art] Meta / ⚪ Play   │  (Ambient radial cover glow + Pin/Settings dock)
+              └──────────────┬───────────────┘
+                             │
+                   Mouse leaves (unless Pinned)
+                             │
+                    Collapse Delay (ms)
+                             │
+                             ▼
+              ┌──────────────────────────────┐
+              │       COLLAPSED NOTCH        │
+              └──────────────────────────────┘
 ```
 
-- **Symmetrical Geometry Morphing**: Smooth 180ms `OutCubic` geometry animation expanding downward from the top bezel and contracting symmetrically around a constant center X coordinate (`180x40` notch $\leftrightarrow$ `360x160` expanded card) with zero position drift across repeated hover cycles.
+- **DeskNotch Chassis & Symmetrical Geometry Morphing**: Authentic top concave flared "ear" curves (`8px` closed / `10px` open) seamlessly joining the display top bezel, with layered frosted glass sheen, ambient radial cover-art glow, and smooth 180ms `OutCubic` morphing around a constant center X coordinate (`220x34` notch $\leftrightarrow$ `380x174` expanded card) with zero position drift.
 - **Hover Expansion & Inactivity Collapse**: Mouse hover on the notch immediately triggers downward expansion; mouse leave starts a configurable single-shot timer (default `3500ms`, adjustable 500–30000ms in settings) before auto-collapsing.
 - **Notch Source Classification**: Dynamically identifies the active source app and renders crisp vector icons (`spotify.svg`, `youtube.svg`, `vlc.svg`, or `default_media.svg`) alongside elided track metadata.
 
@@ -99,11 +99,11 @@ MediaDock presents a top-center, non-draggable overlay anchored flush against th
 
 ### 4.4 Landscape Preferences UI & Persistence
 - **Modern Landscape Dialog**: `680x440` px window with a 160px persistent left navigation sidebar and 6 stacked pages:
-  1. **Preferences**: Close to tray, Start minimized, Start with Windows (Registry `HKCU\...Run`), Always on Top, Enable Dynamic Island.
+  1. **Preferences**: Close to tray, Start minimized, Start with Windows (Registry `HKCU\...Run`), Always on Top, Enable Dynamic Island (Top Notch), Auto-Hide in Fullscreen Games & Apps, Live Synchronized Lyrics, Target Display Monitor selector.
   2. **Global Shortcuts**: Interactive shortcut recorders for Show/Hide and Play/Pause.
-  3. **Dynamic Island**: Configurable collapse delay via `CollapseDelaySpinBox` (500–30000 ms).
+  3. **Dynamic Island**: Expansion Trigger (*Hover to Expand* vs *Click to Expand*), Hover Intent Delay (`0–1000 ms`), and Collapse Delay via `CollapseDelaySpinBox` (`500–30000 ms`).
   4. **Appearance**: Fixed system visual identity overview.
-  5. **Audio**: Equalizer APO status, Audio Boost (Preamp), tone controls (bass, clarity, treble, noise gate), and 5-band graphic equalizer with presets.
+  5. **Audio**: Equalizer APO status, Visualizer Spectrum Mode (*True FFT Frequency Spectrum* vs *Time-Domain RMS Energy*), Audio Boost (Preamp), tone controls (bass, clarity, treble, noise gate), and 5-band graphic equalizer with presets.
   6. **About**: Version information and architectural summary.
 - **`SettingsManager`**: Backed by Qt `QSettings` INI storage with explicit synchronization on save and system tray exit.
 - **Single-Instance Protection**: Enforced via `SingleInstanceGuard` local socket IPC, ensuring only one instance runs and restoring the existing window on secondary launches.
@@ -129,7 +129,7 @@ python -m src.main
 ```
 
 ### Run Automated Test Suite
-MediaDock includes a comprehensive unit and integration test suite (275 tests covering core models, state machine, audio analysis, hotkeys, Equalizer APO, and widget lifecycle):
+MediaDock includes a comprehensive unit and integration test suite (295 tests covering core models, state machine, DeskNotch UI chassis, audio analysis, hotkeys, Equalizer APO, lyrics, and widget lifecycle):
 ```cmd
 .venv\Scripts\python.exe -m unittest discover -s tests
 ```
@@ -182,14 +182,16 @@ Output artifact: `dist/MediaDock.exe`.
   10. *Multi-Session Media Switcher Pill*: Dynamic session switcher dropdown in expanded card.
   11. *Live Synchronized Lyrics Preview*: Async LRCLIB lyrics client and live timeline-synced lyric line.
   (**286 / 286 tests passing**).
+- **DeskNotch UI & Visibility Stability Milestone (COMPLETE)**: Transformed MediaDock's UI to match DeskNotch's obsidian glass aesthetic (`220x34` slim bar $\leftrightarrow$ `380x174` expanded notch with `8px`/`10px` top concave flared bezel ears, `14px`/`26px` bottom corner radii, left-centered radial cover glow, frosted media tile with `92x92` rounded `12px` artwork, uppercase player badge + 3-bar pulse + 12h clock, signature solid white circular Play/Pause disc with black glyph, and integrated Pin/Lock + Settings dock buttons), fixed Win32 DPI-aware fullscreen detection (`IsZoomed` / `WS_CAPTION` exclusion + `GetMonitorInfoW`), added `HWND_TOPMOST` Z-order promotion, and isolated test settings (**295 / 295 tests passing**).
 
 ### Implemented Codebase vs Target Specification Matrix
 
 | Feature / Component | Current Implementation Codebase | Target V1 Specification Status |
 | :--- | :--- | :--- |
 | **Application Launch Stability** | Verified (`python -m src.main` and `dist/MediaDock.exe` launch with 0 errors) | Complete |
-| **Top-Center Notch Screen** | Implemented (Flush `y = 0` at top bezel, flat top, rounded bottom corners, 180x40 notch) | Complete |
-| **Dynamic Album Art Glow** | Implemented (Ambient radial gradient glow, tinted visualizer, and accent highlights) | Complete |
+| **DeskNotch Chassis & Bezel Ears** | Implemented (Flush `y = 0`, top flared concave ears, frosted top sheen, `220x34` / `380x174` card) | Complete |
+| **DeskNotch Media Tile & Controls**| Implemented (Solid white `#FFFFFF` Play/Pause disc, rounded `92x92` art, Pin/Lock & Settings dock) | Complete |
+| **Dynamic Album Art Glow** | Implemented (Ambient radial cover glow centered behind artwork, tinted visualizer and sliders) | Complete |
 | **Interactive Progress Scrubbing** | Implemented (`InteractiveScrubSlider` click-to-seek, smooth drag, live timestamp tooltip) | Complete |
 | **Mirrored Waveform Visualizer** | Implemented (`ReactiveVisualizerWidget(mirrored=True)` symmetrical vertical bar expansion) | Complete |
 | **Click vs. Hover Trigger Mode** | Implemented (Configurable hover/click trigger with hover intent delay timer in Settings) | Complete |
@@ -202,7 +204,7 @@ Output artifact: `dist/MediaDock.exe`.
 | **Live Synchronized Lyrics** | Implemented (`LyricsProvider` async LRCLIB integration, LRC timestamp matching) | Complete |
 | **Geometry Lifecycle & Centering** | Fixed & Verified (Initial launch & 10+ expand/collapse cycles hold exact center X alignment) | Complete |
 | **Preference Persistence Lifecycle** | Fixed & Verified (Preferences refresh on open, sync on tray exit, QSettings preserved) | Complete |
-| **Notch Metadata Alignment** | Fixed & Verified (Metadata content group horizontally CENTER and vertically MIDDLE in 180x40 notch) | Complete |
+| **Notch Metadata Alignment** | Fixed & Verified (Metadata content group horizontally CENTER and vertically MIDDLE in 220x34 notch) | Complete |
 | **Symmetrical Expand Direction** | Fixed & Verified (Expansion originates from centered notch, center X = 960 strictly constant) | Complete |
 | **Live Media Source Icons** | Implemented (Spotify desktop/Store, VLC, YouTube metadata validation, `default_media.svg` fallback) | Complete |
 | **WASAPI Loopback Capture** | Implemented (`WASAPILoopbackCapture` native COM loopback capture, zero micro-dependency) | Complete |
@@ -216,7 +218,7 @@ Output artifact: `dist/MediaDock.exe`.
 
 ### Verification & Release Summary
 - **Source Launch Status**: `python -m src.main` -> **SUCCESSFUL**
-- **Automated Test Suite**: **286 / 286 tests passing** cleanly (`.venv\Scripts\python.exe -m unittest discover -s tests`).
+- **Automated Test Suite**: **295 / 295 tests passing** cleanly (`.venv\Scripts\python.exe -m unittest discover -s tests`).
 - **Whitespace & Formatting**: `git diff --check` clean (0 errors).
 - **Standalone Executable Build**: `MediaDock.spec` PyInstaller build completed cleanly (`dist/MediaDock.exe`).
 
@@ -224,33 +226,21 @@ Output artifact: `dist/MediaDock.exe`.
 
 ## 7. Multi-Phase Roadmap
 
-- **V1 (Current Baseline - Complete)**:
-  - Top-Center Notch Screen (`180x40` notch flush at `y = 0`) and expanded card (`360x160`).
-  - Symmetrical 180ms `OutCubic` morphing with zero position drift.
-  - GSMTC universal media detection & multi-session support.
-  - CoreAudio master volume & mute integration.
-  - WASAPI loopback audio capture & real-time RMS waveform visualizer.
+- **V1 & DeskNotch Baseline (Current - Complete)**:
+  - DeskNotch-inspired top-center notch screen (`220x34` slim bar with concave bezel ears flush at `y = 0` $\leftrightarrow$ `380x174` frosted glass card).
+  - Ambient album-art radial glow, mirrored waveform visualizer, interactive scrub slider with timestamp tooltip, Pin/Lock & Settings dock buttons.
+  - Symmetrical 180ms `OutCubic` morphing with zero position drift and HWND_TOPMOST Z-order promotion.
+  - GSMTC universal media detection, multi-session switcher pill, shuffle & repeat toggles, and async LRCLIB synchronized lyrics.
+  - CoreAudio master/app volume control, WASAPI loopback capture, pure-Python Radix-2 FFT frequency spectrum & RMS energy analyzer.
   - Equalizer APO integration: Audio boost (+12 dB preamp), quick tone controls, and 5-band graphic EQ with dynamic visualizer coupling.
-  - Win32 global hotkeys with interactive 2/3-key recorder UI.
-  - Landscape settings window and system tray lifecycle.
-  - Single-instance IPC guard and autostart integration.
-  - Complete 275/275 test coverage and standalone PyInstaller build.
+  - DPI-safe Win32 fullscreen game/video auto-hide, multi-monitor anchoring, Win32 global hotkeys with interactive 2/3-key recorder UI.
+  - Single-instance IPC guard, autostart integration, **295/295 test coverage**, and standalone PyInstaller build.
 
-- **V1.5 (Planned Polish)**:
-  - Mirrored waveform visualizer (symmetrical vertical expansion, higher bar density).
-  - Audio visualizer attack/decay tuning sliders in Settings.
-  - Expand trigger customization (hover vs. click-to-expand).
-
-- **V2 (Advanced Desktop Integration)**:
-  - Full-screen app and game auto-hide detection (preventing overlay above games/presentations).
-  - Multi-monitor support (monitor selection or follow-active-cursor monitor).
-  - Dynamic album-art dominant color extraction for visualizer and accent highlights.
-  - Per-application volume control via CoreAudio `IAudioSessionControl2`.
-
-- **V3 (Extended Capabilities)**:
-  - Real-time multi-band FFT audio spectrum analysis (bass, mid, treble separation).
-  - Synchronized / plain lyrics integration.
-  - Shuffle and repeat playback toggles.
+- **V2 (Future Productivity & Desk Integration)**:
+  - Focus/Pomodoro countdown timer & micro-task strip inside expanded notch.
+  - Drag-and-drop transient file shelf in expanded view.
+  - Visualizer attack/decay smoothing sliders in Audio Settings.
+  - Automatic follow-active-cursor monitor mode.
 
 ---
 

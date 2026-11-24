@@ -69,7 +69,7 @@ class SettingsManager(QObject):
         "audio/eq_enabled": True,
         "dynamic_island/expand_trigger": "hover",
         "dynamic_island/hover_intent_delay_ms": 0,
-        "window/fullscreen_auto_hide": True,
+        "window/fullscreen_auto_hide": False,
         "window/display_monitor": "primary",
         "audio/spectrum_mode": "rms",
         "features/lyrics_enabled": True,

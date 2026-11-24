@@ -83,6 +83,7 @@ def main() -> int:
     tray_icon.show_hide_requested.connect(toggle_window_visibility)
     tray_icon.show_requested.connect(show_and_front_window)
     tray_icon.settings_requested.connect(open_settings_dialog)
+    window.open_settings_requested.connect(open_settings_dialog)
     tray_icon.exit_requested.connect(quit_application)
 
     # Connect single instance activation signal
