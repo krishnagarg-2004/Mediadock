@@ -25,6 +25,10 @@ class BaseVolumeProvider(ABC):
         """Set master volume percentage (0 to 100). Returns True if successful."""
         pass
 
+    def set_app_volume(self, app_name_or_id: str, percent: int) -> bool:
+        """Set volume for a specific application session, falling back to master volume."""
+        return self.set_volume(percent)
+
     @abstractmethod
     def set_mute(self, muted: bool) -> bool:
         """Set mute state. Returns True if successful."""

@@ -100,3 +100,11 @@ class BaseMediaProvider(ABC):
     def seek_to_position(self, position_ms: int) -> bool:
         """Request active media player to seek to a specific position in milliseconds. Returns True if command was dispatched."""
         pass
+
+    def toggle_shuffle(self) -> bool:
+        """Toggle shuffle playback state. Returns True if command was dispatched."""
+        return False
+
+    def toggle_repeat(self) -> bool:
+        """Toggle repeat playback mode (None -> Track -> List -> None). Returns True if command was dispatched."""
+        return False

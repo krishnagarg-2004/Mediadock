@@ -3,7 +3,21 @@
 import time
 from typing import Any, Optional
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QAbstractAnimation, QRect, QEasingCurve
-from PySide6.QtGui import QKeyEvent, QColor, QFont, QPixmap, QPainter, QCloseEvent, QIcon, QPen, QPainterPath, QAction, QGuiApplication
+from PySide6.QtGui import (
+    QKeyEvent,
+    QColor,
+    QFont,
+    QPixmap,
+    QPainter,
+    QCloseEvent,
+    QIcon,
+    QPen,
+    QPainterPath,
+    QAction,
+    QGuiApplication,
+    QRadialGradient,
+    QCursor,
+)
 
 from PySide6.QtWidgets import (
     QApplication,
@@ -13,6 +27,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSlider,
+    QComboBox,
     QGraphicsOpacityEffect,
     QMenu,
 )
@@ -31,8 +46,10 @@ class DynamicIslandState(Enum):
 from src.core.models import TrackInfo, PlaybackStatus, VolumeState
 from src.core.media_core import MediaCore
 from src.core.settings import SettingsManager
+from src.core.fullscreen_detector import is_foreground_fullscreen
+from src.media.lyrics_provider import LyricsProvider
 from src.ui.frameless_window import FramelessWindow
-from src.ui.components import ElidedLabel
+from src.ui.components import ElidedLabel, InteractiveScrubSlider
 from src.ui.components_island import ReactiveVisualizerWidget, CollapsedCapsuleWidget, CollapsedNotchWidget
 from src.ui.theme import (
     COLOR_BG_ISLAND,
@@ -137,6 +154,22 @@ class MainWindow(FramelessWindow):
         self._is_quitting: bool = False
         self._current_status: PlaybackStatus = PlaybackStatus.CLOSED
         self._current_accent: QColor = COLOR_ACCENT_BLUE
+
+        # Hover Intent Timer for expansion trigger
+        self._hover_intent_timer = QTimer(self)
+        self._hover_intent_timer.setSingleShot(True)
+        self._hover_intent_timer.setInterval(self._settings_manager.get_hover_intent_delay_ms())
+        self._hover_intent_timer.timeout.connect(self._on_hover_intent_timeout)
+
+        # Fullscreen Game & App Auto-Hide Timer
+        self._suppressed_by_fullscreen: bool = False
+        self._fullscreen_timer = QTimer(self)
+        self._fullscreen_timer.setInterval(1000)
+        self._fullscreen_timer.timeout.connect(self._on_fullscreen_timer_tick)
+        self._fullscreen_timer.start()
+
+        # Synchronized Lyrics Provider
+        self._lyrics_provider = LyricsProvider()
 
         # Setup subtle opacity fade animation effect for track changes
         self._opacity_effect = QGraphicsOpacityEffect(self)
@@ -301,7 +334,13 @@ class MainWindow(FramelessWindow):
         if self._state == DynamicIslandState.COLLAPSED:
             if self._collapse_timer.isActive():
                 self._collapse_timer.stop()
-            self.set_state(DynamicIslandState.EXPANDED)
+            trigger = self._settings_manager.get_expand_trigger()
+            if trigger == "hover":
+                delay = self._settings_manager.get_hover_intent_delay_ms()
+                if delay > 0:
+                    self._hover_intent_timer.start(delay)
+                else:
+                    self.set_state(DynamicIslandState.EXPANDED)
         elif self._state == DynamicIslandState.EXPANDED:
             if self._collapse_timer.isActive():
                 self._collapse_timer.stop()
@@ -309,18 +348,93 @@ class MainWindow(FramelessWindow):
     def leaveEvent(self, event) -> None:
         """Handle mouse leave event on Dynamic Island."""
         super().leaveEvent(event)
+        if self._hover_intent_timer.isActive():
+            self._hover_intent_timer.stop()
         if self._state == DynamicIslandState.EXPANDED:
             delay_ms = self._settings_manager.get_collapse_delay_ms()
             self._collapse_timer.start(delay_ms)
+
+    def _on_hover_intent_timeout(self) -> None:
+        """Hover intent timer timeout handler."""
+        if self._state == DynamicIslandState.COLLAPSED and self.underMouse():
+            self.set_state(DynamicIslandState.EXPANDED)
+
+    def mousePressEvent(self, event) -> None:
+        """Expand on click when collapsed."""
+        if event.button() == Qt.MouseButton.LeftButton and self._state == DynamicIslandState.COLLAPSED:
+            if self._hover_intent_timer.isActive():
+                self._hover_intent_timer.stop()
+            self.set_state(DynamicIslandState.EXPANDED)
+            event.accept()
+        else:
+            super().mousePressEvent(event)
 
     def _on_collapse_timer_timeout(self) -> None:
         """Single-shot collapse timer timeout handler."""
         if self._state == DynamicIslandState.EXPANDED:
             self.set_state(DynamicIslandState.COLLAPSED)
 
+    def _on_fullscreen_timer_tick(self) -> None:
+        """Periodically check if foreground window is fullscreen and auto-hide/restore overlay."""
+        if not self._settings_manager.get_fullscreen_auto_hide():
+            if self._suppressed_by_fullscreen:
+                self._suppressed_by_fullscreen = False
+                if self._state != DynamicIslandState.HIDDEN:
+                    self.show()
+            return
+
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if not screen:
+            return
+        geom = screen.geometry()
+        screen_rect = (geom.x(), geom.y(), geom.width(), geom.height())
+        win_id = int(self.winId()) if self.isVisible() else None
+
+        is_fs = is_foreground_fullscreen(screen_rect, ignore_hwnd=win_id)
+        if is_fs and not self._suppressed_by_fullscreen:
+            if self.isVisible():
+                self._suppressed_by_fullscreen = True
+                self.hide()
+        elif not is_fs and self._suppressed_by_fullscreen:
+            self._suppressed_by_fullscreen = False
+            if self._state != DynamicIslandState.HIDDEN:
+                self.show()
+
+    def paintEvent(self, event) -> None:
+        """Paint frameless notch base and subtle ambient color glow when expanded."""
+        super().paintEvent(event)
+        if self._state == DynamicIslandState.EXPANDED and hasattr(self, "_current_accent"):
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            glow_grad = QRadialGradient(float(self.rect().center().x()), float(self.rect().top()), float(self.width() * 0.75))
+            glow_col = QColor(self._current_accent)
+            glow_col.setAlpha(26)
+            glow_grad.setColorAt(0.0, glow_col)
+            glow_grad.setColorAt(1.0, QColor(0, 0, 0, 0))
+            painter.fillRect(self.rect(), glow_grad)
+            painter.end()
+
     def compute_top_center_geometry(self, width: int, height: int) -> QRect:
-        """Calculate top-center QRect on primary screen work area with TOP_OFFSET_PX margin."""
-        screen = QGuiApplication.primaryScreen()
+        """Calculate top-center QRect on selected screen work area with TOP_OFFSET_PX margin."""
+        target_monitor = self._settings_manager.get_display_monitor()
+        screens = QGuiApplication.screens()
+        screen = None
+
+        if target_monitor != "primary" and screens:
+            for s in screens:
+                if s.name() == target_monitor:
+                    screen = s
+                    break
+            if screen is None and target_monitor.startswith("monitor_"):
+                try:
+                    idx = int(target_monitor.split("_")[1]) - 1
+                    if 0 <= idx < len(screens):
+                        screen = screens[idx]
+                except (ValueError, IndexError):
+                    pass
+
+        if screen is None:
+            screen = QGuiApplication.primaryScreen()
         if screen is None:
             return QRect(0, 0, width, height)
         geom = screen.availableGeometry()
@@ -425,9 +539,19 @@ class MainWindow(FramelessWindow):
                 self.set_state(DynamicIslandState.COLLAPSED)
         elif key == "dynamic_island/collapse_delay_ms":
             self._collapse_timer.setInterval(int(value))
+        elif key == "dynamic_island/hover_intent_delay_ms":
+            self._hover_intent_timer.setInterval(int(value))
+        elif key == "window/display_monitor":
+            self.update_top_center_position()
         elif key == "window/compact_mode":
             if bool(value) != self._is_compact_mode:
                 self.set_compact_mode(bool(value))
+        elif key == "audio/spectrum_mode":
+            if self._media_core and hasattr(self._media_core, "_analyzer") and self._media_core._analyzer:
+                self._media_core._analyzer.set_mode(str(value))
+        elif key == "features/lyrics_enabled":
+            if not bool(value) and hasattr(self, "lyrics_label"):
+                self.lyrics_label.hide()
 
     def _init_ui(self) -> None:
         """Initialize the widget layout, collapsed capsule container, and expanded card container."""
@@ -470,10 +594,35 @@ class MainWindow(FramelessWindow):
         self.title_label.setFont(title_font)
         self.title_label.setStyleSheet("color: #FFFFFF;")
 
+        # Active Session Switcher Pill
+        self.combo_sessions = QComboBox(self._expanded_widget)
+        self.combo_sessions.setFixedSize(80, 20)
+        self.combo_sessions.setStyleSheet(
+            "QComboBox { background-color: #141414; color: #CDD6F4; border: 1px solid #2A2A2A; border-radius: 4px; font-size: 8px; padding: 1px 4px; }"
+            "QComboBox::drop-down { border: none; width: 10px; }"
+            "QComboBox QAbstractItemView { background-color: #141414; color: #CDD6F4; selection-background-color: #2A2A2A; }"
+        )
+        self.combo_sessions.currentIndexChanged.connect(self._on_session_combo_changed)
+        self.combo_sessions.hide()
+
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(6)
+        title_row.addWidget(self.title_label, stretch=1)
+        title_row.addWidget(self.combo_sessions)
+
         self.artist_label = ElidedLabel("No Media Playing", self._expanded_widget)
         sub_font = QFont("Segoe UI", 9)
         self.artist_label.setFont(sub_font)
         self.artist_label.setStyleSheet("color: #A6ADC8;")
+
+        # Synchronized Lyrics Line
+        self.lyrics_label = ElidedLabel("", self._expanded_widget)
+        lyrics_font = QFont("Segoe UI", 8)
+        lyrics_font.setItalic(True)
+        self.lyrics_label.setFont(lyrics_font)
+        self.lyrics_label.setStyleSheet("color: #00FF7F;")
+        self.lyrics_label.hide()
 
         self.status_label = QLabel("CLOSED", self._expanded_widget)
         status_font = QFont("Segoe UI", 8, QFont.Weight.Bold)
@@ -483,59 +632,75 @@ class MainWindow(FramelessWindow):
             f"color: {text_hex}; background-color: {bg_hex}; border-radius: 4px; padding: 2px 6px;"
         )
 
-        # Reactive Visualizer
-        self._visualizer = ReactiveVisualizerWidget(bar_count=5, parent=self._expanded_widget)
+        # Reactive Visualizer (Mirrored symmetrical expansion)
+        self._visualizer = ReactiveVisualizerWidget(bar_count=5, mirrored=True, parent=self._expanded_widget)
 
         # Transport Controls Row
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(0, 2, 0, 0)
-        controls_layout.setSpacing(8)
+        controls_layout.setSpacing(6)
         controls_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
         btn_style = get_button_stylesheet()
 
         self.btn_prev = QPushButton(self._expanded_widget)
-        self.btn_prev.setFixedSize(30, 24)
+        self.btn_prev.setFixedSize(26, 24)
         self.btn_prev.setStyleSheet(btn_style)
-        self.btn_prev.setIcon(get_svg_icon("previous", 14, QColor("#CDD6F4")))
+        self.btn_prev.setIcon(get_svg_icon("previous", 13, QColor("#CDD6F4")))
         self.btn_prev.clicked.connect(self._on_btn_prev_clicked)
 
         self.btn_play_pause = QPushButton(self._expanded_widget)
-        self.btn_play_pause.setFixedSize(36, 24)
+        self.btn_play_pause.setFixedSize(32, 24)
         self.btn_play_pause.setStyleSheet(btn_style)
-        self.btn_play_pause.setIcon(get_svg_icon("play", 14, QColor("#CDD6F4")))
+        self.btn_play_pause.setIcon(get_svg_icon("play", 13, QColor("#CDD6F4")))
         self.btn_play_pause.clicked.connect(self._on_btn_play_pause_clicked)
 
         self.btn_next = QPushButton(self._expanded_widget)
-        self.btn_next.setFixedSize(30, 24)
+        self.btn_next.setFixedSize(26, 24)
         self.btn_next.setStyleSheet(btn_style)
-        self.btn_next.setIcon(get_svg_icon("next", 14, QColor("#CDD6F4")))
+        self.btn_next.setIcon(get_svg_icon("next", 13, QColor("#CDD6F4")))
         self.btn_next.clicked.connect(self._on_btn_next_clicked)
+
+        # Shuffle & Repeat Toggles
+        self.btn_shuffle = QPushButton(self._expanded_widget)
+        self.btn_shuffle.setFixedSize(24, 24)
+        self.btn_shuffle.setStyleSheet(btn_style)
+        self.btn_shuffle.setIcon(get_svg_icon("shuffle", 12, QColor("#CDD6F4")))
+        self.btn_shuffle.clicked.connect(self._on_btn_shuffle_clicked)
+
+        self.btn_repeat = QPushButton(self._expanded_widget)
+        self.btn_repeat.setFixedSize(24, 24)
+        self.btn_repeat.setStyleSheet(btn_style)
+        self.btn_repeat.setIcon(get_svg_icon("repeat", 12, QColor("#CDD6F4")))
+        self.btn_repeat.clicked.connect(self._on_btn_repeat_clicked)
 
         # Master Volume & Mute Controls
         self.btn_mute = QPushButton(self._expanded_widget)
-        self.btn_mute.setFixedSize(26, 24)
+        self.btn_mute.setFixedSize(24, 24)
         self.btn_mute.setStyleSheet(btn_style)
-        self.btn_mute.setIcon(get_svg_icon("volume", 14, QColor("#CDD6F4")))
+        self.btn_mute.setIcon(get_svg_icon("volume", 13, QColor("#CDD6F4")))
         self.btn_mute.clicked.connect(self._on_btn_mute_clicked)
 
         self.slider_volume = QSlider(Qt.Orientation.Horizontal, self._expanded_widget)
         self.slider_volume.setRange(0, 100)
         self.slider_volume.setValue(100)
-        self.slider_volume.setFixedWidth(56)
+        self.slider_volume.setFixedWidth(50)
         self.slider_volume.setStyleSheet(get_slider_stylesheet(self._current_accent))
         self.slider_volume.valueChanged.connect(self._on_volume_slider_changed)
 
         controls_layout.addWidget(self.btn_prev)
         controls_layout.addWidget(self.btn_play_pause)
         controls_layout.addWidget(self.btn_next)
+        controls_layout.addWidget(self.btn_shuffle)
+        controls_layout.addWidget(self.btn_repeat)
         controls_layout.addWidget(self.btn_mute)
         controls_layout.addWidget(self.slider_volume)
         controls_layout.addWidget(self._visualizer)
         controls_layout.addWidget(self.status_label)
 
-        info_layout.addWidget(self.title_label)
+        info_layout.addLayout(title_row)
         info_layout.addWidget(self.artist_label)
+        info_layout.addWidget(self.lyrics_label)
         info_layout.addLayout(controls_layout)
 
         top_layout.addWidget(self.art_label)
@@ -556,7 +721,7 @@ class MainWindow(FramelessWindow):
         self.lbl_duration.setFont(time_font)
         self.lbl_duration.setStyleSheet("color: #A6ADC8;")
 
-        self.progress_slider = QSlider(Qt.Orientation.Horizontal, self._expanded_widget)
+        self.progress_slider = InteractiveScrubSlider(Qt.Orientation.Horizontal, self._expanded_widget)
         self.progress_slider.setRange(0, 0)
         self.progress_slider.setValue(0)
         self.progress_slider.setStyleSheet(get_slider_stylesheet(self._current_accent))
@@ -590,12 +755,16 @@ class MainWindow(FramelessWindow):
             self._media_core.audio_visualizer_updated.connect(
                 self.on_audio_visualizer_updated
             )
+        if hasattr(self._media_core, "sessions_changed"):
+            self._media_core.sessions_changed.connect(self.on_sessions_changed)
 
         # Initial display sync
         self.on_track_changed(self._media_core.get_current_track())
         self.on_status_changed(self._media_core.get_playback_status())
         self.on_session_availability_changed(self._media_core.is_session_available())
         self.on_volume_changed(self._media_core.get_volume_state())
+        if hasattr(self._media_core, "get_available_sessions"):
+            self.on_sessions_changed(self._media_core.get_available_sessions())
 
 
     # --- Button & Slider Click Handlers ---
@@ -612,9 +781,43 @@ class MainWindow(FramelessWindow):
         if self._media_core:
             self._media_core.next_track()
 
+    def _on_btn_shuffle_clicked(self) -> None:
+        if self._media_core:
+            self._media_core.toggle_shuffle()
+
+    def _on_btn_repeat_clicked(self) -> None:
+        if self._media_core:
+            self._media_core.toggle_repeat()
+
     def _on_btn_mute_clicked(self) -> None:
         if self._media_core:
             self._media_core.toggle_mute()
+
+    def _on_session_combo_changed(self, index: int) -> None:
+        """Slot for session selector combo change."""
+        if index < 0 or not self._media_core:
+            return
+        session_id = self.combo_sessions.itemData(index)
+        if session_id:
+            self._media_core.select_session(session_id)
+
+    def on_sessions_changed(self, sessions: list) -> None:
+        """Slot for sessions_changed signal. Updates session switcher dropdown."""
+        if not hasattr(self, "combo_sessions"):
+            return
+        self.combo_sessions.blockSignals(True)
+        self.combo_sessions.clear()
+        if len(sessions) > 1:
+            for s in sessions:
+                name = getattr(s, "display_name", "") or getattr(s, "source_name", "Media")
+                sid = getattr(s, "session_id", None)
+                self.combo_sessions.addItem(name[:12], sid)
+                if getattr(s, "is_current", False):
+                    self.combo_sessions.setCurrentIndex(self.combo_sessions.count() - 1)
+            self.combo_sessions.show()
+        else:
+            self.combo_sessions.hide()
+        self.combo_sessions.blockSignals(False)
 
     def _on_volume_slider_changed(self, value: int) -> None:
         if self._is_setting_volume:
@@ -682,6 +885,17 @@ class MainWindow(FramelessWindow):
         if not self._is_seeking:
             self.progress_slider.setValue(current_pos_ms)
 
+        # Update synchronized lyrics preview line
+        if self._settings_manager.get_lyrics_enabled():
+            lyric = self._lyrics_provider.get_current_lyric(current_pos_ms)
+            if lyric:
+                self.lyrics_label.setText(f"♪ {lyric}")
+                self.lyrics_label.show()
+            else:
+                self.lyrics_label.hide()
+        else:
+            self.lyrics_label.hide()
+
     # --- Qt Signal Slots ---
 
     def on_track_changed(self, track: TrackInfo) -> None:
@@ -703,6 +917,10 @@ class MainWindow(FramelessWindow):
         self.title_label.setText(track.title)
         self.artist_label.setText(track.artist)
         self._update_album_art(track.album_art_bytes)
+
+        # Trigger synchronized lyrics fetch
+        if self._settings_manager.get_lyrics_enabled() and track and track.title:
+            self._lyrics_provider.fetch_lyrics_async(track.title, track.artist, track.duration_ms)
 
         # Dynamic album art accent extraction & styling
         self._current_accent = extract_dominant_color(track.album_art_bytes)

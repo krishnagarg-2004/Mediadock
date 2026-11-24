@@ -21,6 +21,7 @@ class ReactiveVisualizerWidget(QWidget):
     """Reusable presentation-only reactive visualizer.
 
     Renders real-time waveform bars reacting strictly to system audio analysis data.
+    Supports symmetrical mirrored vertical expansion around a center axis.
     Does NOT use artificial/synthetic animation timers when audio is silent or unavailable.
     """
 
@@ -28,11 +29,13 @@ class ReactiveVisualizerWidget(QWidget):
         self,
         bar_count: int = 5,
         bar_color: QColor = COLOR_ACCENT_BLUE,
+        mirrored: bool = True,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self._bar_count = max(3, bar_count)
         self._bar_color = bar_color
+        self._mirrored: bool = mirrored
         self._is_playing: bool = False
         self._realtime_bars: Optional[List[float]] = None
 
@@ -43,6 +46,17 @@ class ReactiveVisualizerWidget(QWidget):
     def is_animated(self) -> bool:
         """Return True if real-time audio playback is active and bar heights are available."""
         return self._is_playing and self._realtime_bars is not None
+
+    @property
+    def is_mirrored(self) -> bool:
+        """Return True if bars expand symmetrically from center baseline."""
+        return self._mirrored
+
+    def set_mirrored(self, mirrored: bool) -> None:
+        """Update mirrored display mode."""
+        if self._mirrored != mirrored:
+            self._mirrored = mirrored
+            self.update()
 
     def set_bar_color(self, color: QColor) -> None:
         """Update waveform bar accent color."""
@@ -99,7 +113,10 @@ class ReactiveVisualizerWidget(QWidget):
 
             bar_h = max(3.0, h * height_factor)
             x = i * (bar_width + spacing)
-            y = h - bar_h
+            if self._mirrored:
+                y = (h - bar_h) / 2.0
+            else:
+                y = h - bar_h
 
             rect = QRectF(x, y, bar_width, bar_h)
             path = QPainterPath()

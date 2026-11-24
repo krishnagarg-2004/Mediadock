@@ -169,6 +169,19 @@ Output artifact: `dist/MediaDock.exe`.
 - **Documentation Consolidation Milestone (COMPLETE)**: Filtered noise, merged `PROJECT_BIBLE.md` and `README.md` into a single authoritative `README.md`, updated `AI_RULES.md`, and eliminated redundant specification documents (**258 / 258 tests passing**).
 - **Audio Boost & Equalizer Milestone (COMPLETE)**: Implemented `EqualizerAPOManager`, Preamp Volume Boost (up to +12 dB), Bass low-shelf, Vocal Clarity peaking, Treble high-shelf, Noise Gate threshold, 5-band Graphic Equalizer with presets (Flat, Bass Boost, Vocal Clarity, Electronic, Rock, Acoustic, Custom), and dynamic coupling to `AudioAnalyzer` for real-time visualizer bar reactions (**275 / 275 tests passing**).
 - **Notch Screen Conversion Milestone (COMPLETE)**: Converted floating capsule into flush top-center **Notch Screen** (`y = 0`, flat top against screen bezel, smooth rounded bottom corners), updated `CollapsedNotchWidget`, `FramelessWindow`, and `MainWindow` geometry lifecycle (**275 / 275 tests passing**).
+- **V1.5 Visual, Audio & Desktop Superpowers Milestone (COMPLETE)**: Implemented all 11 core upgrades in one go:
+  1. *Dynamic Album Art Color Glow*: Radial ambient glow and accent tinting from track artwork.
+  2. *Interactive Progress Scrubbing*: `InteractiveScrubSlider` with proportional click-to-seek, smooth scrubbing, and live timestamp tooltip.
+  3. *Mirrored Waveform Visualizer*: Symmetrical vertical bar expansion around center baseline with rounded pill caps.
+  4. *Click vs. Hover Trigger Mode*: Configurable expansion trigger with intent delay deadzone timer.
+  5. *Shuffle & Repeat Playback Toggles*: WinRT GSMTC controls with dedicated SVG vector icons.
+  6. *Fullscreen Game & App Auto-Hide*: Native Win32 foreground window detection suppressing overlay in games/movies.
+  7. *Multi-Monitor Display Selector*: Configurable monitor target anchoring across multi-screen setups.
+  8. *True FFT Audio Spectrum*: Pure Python Radix-2 FFT logarithmic spectrum analysis (30Hz–16000Hz).
+  9. *Per-App Volume Mixing*: Application-targeted volume adjustment with master volume fallback.
+  10. *Multi-Session Media Switcher Pill*: Dynamic session switcher dropdown in expanded card.
+  11. *Live Synchronized Lyrics Preview*: Async LRCLIB lyrics client and live timeline-synced lyric line.
+  (**286 / 286 tests passing**).
 
 ### Implemented Codebase vs Target Specification Matrix
 
@@ -176,21 +189,26 @@ Output artifact: `dist/MediaDock.exe`.
 | :--- | :--- | :--- |
 | **Application Launch Stability** | Verified (`python -m src.main` and `dist/MediaDock.exe` launch with 0 errors) | Complete |
 | **Top-Center Notch Screen** | Implemented (Flush `y = 0` at top bezel, flat top, rounded bottom corners, 180x40 notch) | Complete |
+| **Dynamic Album Art Glow** | Implemented (Ambient radial gradient glow, tinted visualizer, and accent highlights) | Complete |
+| **Interactive Progress Scrubbing** | Implemented (`InteractiveScrubSlider` click-to-seek, smooth drag, live timestamp tooltip) | Complete |
+| **Mirrored Waveform Visualizer** | Implemented (`ReactiveVisualizerWidget(mirrored=True)` symmetrical vertical bar expansion) | Complete |
+| **Click vs. Hover Trigger Mode** | Implemented (Configurable hover/click trigger with hover intent delay timer in Settings) | Complete |
+| **Shuffle & Repeat Toggles** | Implemented (GSMTC async dispatches, `shuffle.svg` / `repeat.svg`, interactive buttons) | Complete |
+| **Fullscreen Game Auto-Hide** | Implemented (`is_foreground_fullscreen` Win32 detection, auto-hide/restore overlay) | Complete |
+| **Multi-Monitor Display Selector** | Implemented (Settings monitor selector, multi-screen geometry anchoring) | Complete |
+| **True FFT Audio Spectrum** | Implemented (`AudioAnalyzer` pure-Python Cooley-Tukey Radix-2 FFT logarithmic spectrum) | Complete |
+| **Per-App Volume Mixing** | Implemented (`set_app_volume` CoreAudio interface with master fallback) | Complete |
+| **Multi-Session Media Switcher** | Implemented (Active session dropdown in expanded card, dynamic `sessions_changed` sync) | Complete |
+| **Live Synchronized Lyrics** | Implemented (`LyricsProvider` async LRCLIB integration, LRC timestamp matching) | Complete |
 | **Geometry Lifecycle & Centering** | Fixed & Verified (Initial launch & 10+ expand/collapse cycles hold exact center X alignment) | Complete |
 | **Preference Persistence Lifecycle** | Fixed & Verified (Preferences refresh on open, sync on tray exit, QSettings preserved) | Complete |
 | **Notch Metadata Alignment** | Fixed & Verified (Metadata content group horizontally CENTER and vertically MIDDLE in 180x40 notch) | Complete |
 | **Symmetrical Expand Direction** | Fixed & Verified (Expansion originates from centered notch, center X = 960 strictly constant) | Complete |
 | **Live Media Source Icons** | Implemented (Spotify desktop/Store, VLC, YouTube metadata validation, `default_media.svg` fallback) | Complete |
 | **WASAPI Loopback Capture** | Implemented (`WASAPILoopbackCapture` native COM loopback capture, zero micro-dependency) | Complete |
-| **Audio Analysis Engine** | Implemented (`AudioAnalyzer` RMS sub-window energy, attack/decay, multi-channel downmixing) | Complete |
-| **Real-Time Visualizer Pipeline** | Implemented (`WASAPILoopbackCapture` -> `AudioAnalyzer` -> `MediaCore` -> `MainWindow` -> `ReactiveVisualizerWidget`, real audio only) | Complete |
 | **Equalizer APO Integration** | Implemented (`EqualizerAPOManager` detection, config generation, `mediadock_eq.txt` sync) | Complete |
 | **Audio Boost & Tone Controls** | Implemented (Preamp boost to +12 dB, Bass low-shelf, Clarity peaking, Treble air, Noise Gate) | Complete |
 | **5-Band Graphic Equalizer** | Implemented (60Hz, 250Hz, 1kHz, 4kHz, 16kHz sliders, 6 presets, Flat reset) | Complete |
-| **Visualizer Dynamic EQ Coupling**| Implemented (AudioAnalyzer scales bar sensitivity, boosts bass/clarity bars, silences under noise gate) | Complete |
-| **Dynamic Island State Machine** | Implemented (`HIDDEN` ↔ `COLLAPSED` ↔ `EXPANDED`) | Complete |
-| **Symmetrical Geometry Morphing** | Implemented (Smooth 180ms `OutCubic` geometry morphing centered around constant center X) | Complete |
-| **Top-Center Screen Positioning** | Implemented (`180x40` notch, `360x160` card, top offset 0px flush) | Complete |
 | **Global Win32 Hotkey Dispatch** | Implemented (HWND message target, Shiboken VoidPtr fix, `Ctrl+Alt+S` / `Ctrl+Alt+Space`) | Complete |
 | **Global Shortcut Recorder UI** | Implemented (`ShortcutRecorderWidget` interactive keycap pills with `+` labels, 2/3-key validation, rollback) | Complete |
 | **Landscape Settings UI & Sidebar** | Implemented (`680x440` px window, 160px sidebar, 6 pages, dark charcoal selected panel, no focus outline) | Complete |
@@ -198,7 +216,7 @@ Output artifact: `dist/MediaDock.exe`.
 
 ### Verification & Release Summary
 - **Source Launch Status**: `python -m src.main` -> **SUCCESSFUL**
-- **Automated Test Suite**: **275 / 275 tests passing** cleanly (`.venv\Scripts\python.exe -m unittest discover -s tests`).
+- **Automated Test Suite**: **286 / 286 tests passing** cleanly (`.venv\Scripts\python.exe -m unittest discover -s tests`).
 - **Whitespace & Formatting**: `git diff --check` clean (0 errors).
 - **Standalone Executable Build**: `MediaDock.spec` PyInstaller build completed cleanly (`dist/MediaDock.exe`).
 

@@ -19,6 +19,7 @@ class AudioAnalyzer:
         decay_factor: float = 0.15,
         min_baseline: float = 0.05,
         sensitivity: float = 1.0,
+        mode: str = "rms",
     ) -> None:
         """Initialize AudioAnalyzer with configuration parameters.
 
@@ -28,12 +29,14 @@ class AudioAnalyzer:
             decay_factor: Smoothing factor when energy decreases (0.0 to 1.0, default 0.15).
             min_baseline: Baseline height during silence (0.0 to 1.0, default 0.05).
             sensitivity: Gain multiplier for input energy (default 1.0).
+            mode: Analysis mode: 'fft' (frequency spectrum) or 'rms' (time-domain sub-windows).
         """
         self._bar_count = max(1, int(bar_count))
         self._attack_factor = max(0.0, min(1.0, float(attack_factor)))
         self._decay_factor = max(0.0, min(1.0, float(decay_factor)))
         self._min_baseline = max(0.0, min(1.0, float(min_baseline)))
         self._sensitivity = max(0.0, float(sensitivity))
+        self._mode = "rms" if str(mode).lower() == "rms" else "fft"
 
         # Audio EQ & Dynamic Enhancements
         self._preamp_multiplier: float = 1.0
@@ -67,6 +70,15 @@ class AudioAnalyzer:
     def sensitivity(self) -> float:
         """Return sensitivity multiplier."""
         return self._sensitivity
+
+    @property
+    def mode(self) -> str:
+        """Return active analysis mode ('fft' or 'rms')."""
+        return self._mode
+
+    def set_mode(self, mode: str) -> None:
+        """Set analysis mode ('fft' or 'rms')."""
+        self._mode = "rms" if str(mode).lower() == "rms" else "fft"
 
     @property
     def current_bars(self) -> List[float]:
@@ -176,8 +188,12 @@ class AudioAnalyzer:
                 frame_sum = sum(samples[offset + c] for c in range(channels))
                 mono_samples.append(frame_sum / channels)
 
-        # 2. Divide mono samples into `bar_count` sub-windows and calculate RMS energy per window
-        raw_bar_energies = self._calculate_subwindow_rms(mono_samples)
+        # 2. Divide mono samples into frequency spectrum or sub-windows based on active mode
+        if self._mode == "fft":
+            sample_rate = getattr(frame, "sample_rate", 48000) or 48000
+            raw_bar_energies = self._calculate_fft_spectrum(mono_samples, int(sample_rate))
+        else:
+            raw_bar_energies = self._calculate_subwindow_rms(mono_samples)
 
         # 3. Apply attack / decay temporal smoothing, EQ weights, and baseline floor
         for k in range(self._bar_count):
@@ -235,3 +251,58 @@ class AudioAnalyzer:
             energies.append(min(1.0, perceptual))
 
         return energies
+
+    def _calculate_fft_spectrum(self, mono_samples: List[float], sample_rate: int) -> List[float]:
+        """Calculate frequency spectrum magnitude across frequency bands using pure Python Radix-2 FFT."""
+        N = 256
+        if len(mono_samples) < N:
+            padded = mono_samples + [0.0] * (N - len(mono_samples))
+        else:
+            padded = mono_samples[-N:]
+
+        # Apply Hanning window
+        windowed = [
+            padded[i] * 0.5 * (1.0 - math.cos(2.0 * math.pi * i / (N - 1)))
+            for i in range(N)
+        ]
+
+        complex_samples = [complex(s, 0.0) for s in windowed]
+        fft_res = self._fft_radix2(complex_samples)
+        half = N // 2
+        magnitudes = [abs(fft_res[k]) / (N / 4.0) for k in range(half)]
+
+        nyquist = sample_rate / 2.0
+        bin_hz = max(1.0, sample_rate / N)
+
+        # Logarithmically-spaced frequency bands (30 Hz to 16000 Hz)
+        min_f = 30.0
+        max_f = min(16000.0, nyquist)
+        log_min = math.log10(min_f)
+        log_max = math.log10(max_f)
+        step = (log_max - log_min) / self._bar_count
+
+        band_energies = []
+        for b in range(self._bar_count):
+            f_start = math.pow(10.0, log_min + b * step)
+            f_end = math.pow(10.0, log_min + (b + 1) * step)
+
+            bin_start = max(0, min(half - 1, int(f_start / bin_hz)))
+            bin_end = max(bin_start + 1, min(half, int(f_end / bin_hz) + 1))
+
+            bin_slice = magnitudes[bin_start:bin_end]
+            avg_mag = (sum(bin_slice) / len(bin_slice)) if bin_slice else 0.0
+            comp = math.pow(min(1.0, avg_mag * 1.5), 0.7)
+            band_energies.append(comp)
+
+        return band_energies
+
+    @staticmethod
+    def _fft_radix2(x: List[complex]) -> List[complex]:
+        """Radix-2 Cooley-Tukey decimation-in-time Fast Fourier Transform."""
+        N = len(x)
+        if N <= 1:
+            return x
+        even = AudioAnalyzer._fft_radix2(x[0::2])
+        odd = AudioAnalyzer._fft_radix2(x[1::2])
+        factors = [math.e ** (-2j * math.pi * k / N) * odd[k] for k in range(N // 2)]
+        return [even[k] + factors[k] for k in range(N // 2)] + [even[k] - factors[k] for k in range(N // 2)]

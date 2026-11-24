@@ -219,6 +219,32 @@ class TestSettingsManager(unittest.TestCase):
         self.settings.set_noise_gate_percent(100)  # max 50%
         self.assertEqual(self.settings.get_noise_gate_percent(), 50)
 
+    def test_advanced_feature_settings(self) -> None:
+        """Verify advanced features settings getters, setters, and defaults."""
+        self.assertEqual(self.settings.get_expand_trigger(), "hover")
+        self.settings.set_expand_trigger("click")
+        self.assertEqual(self.settings.get_expand_trigger(), "click")
+
+        self.assertEqual(self.settings.get_hover_intent_delay_ms(), 0)
+        self.settings.set_hover_intent_delay_ms(250)
+        self.assertEqual(self.settings.get_hover_intent_delay_ms(), 250)
+
+        self.assertTrue(self.settings.get_fullscreen_auto_hide())
+        self.settings.set_fullscreen_auto_hide(False)
+        self.assertFalse(self.settings.get_fullscreen_auto_hide())
+
+        self.assertEqual(self.settings.get_display_monitor(), "primary")
+        self.settings.set_display_monitor("monitor_2")
+        self.assertEqual(self.settings.get_display_monitor(), "monitor_2")
+
+        self.assertEqual(self.settings.get_spectrum_mode(), "rms")
+        self.settings.set_spectrum_mode("rms")
+        self.assertEqual(self.settings.get_spectrum_mode(), "rms")
+
+        self.assertTrue(self.settings.get_lyrics_enabled())
+        self.settings.set_lyrics_enabled(False)
+        self.assertFalse(self.settings.get_lyrics_enabled())
+
 
 if __name__ == "__main__":
     unittest.main()

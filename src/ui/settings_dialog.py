@@ -492,8 +492,31 @@ class SettingsDialog(QDialog):
         self.lbl_always_on_top_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;")
 
         self.chk_dynamic_island = QCheckBox("Enable Dynamic Island (Top Notch)", page_prefs)
-        self.lbl_dynamic_island_desc = QLabel("Anchors ambient notch screen to top-center of primary screen", page_prefs)
+        self.lbl_dynamic_island_desc = QLabel("Anchors ambient notch screen to top-center of selected screen", page_prefs)
         self.lbl_dynamic_island_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;")
+
+        self.chk_fullscreen_auto_hide = QCheckBox("Auto-Hide in Fullscreen Games & Apps", page_prefs)
+        self.lbl_fullscreen_auto_hide_desc = QLabel("Suppresses top notch overlay when playing games or watching fullscreen videos", page_prefs)
+        self.lbl_fullscreen_auto_hide_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;")
+
+        self.chk_lyrics_enabled = QCheckBox("Enable Live Synchronized Lyrics", page_prefs)
+        self.lbl_lyrics_desc = QLabel("Displays synchronized lyric lines in expanded media card when available", page_prefs)
+        self.lbl_lyrics_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;")
+
+        mon_layout = QHBoxLayout()
+        mon_layout.setContentsMargins(24, 4, 0, 0)
+        lbl_mon = QLabel("Target Display Monitor:", page_prefs)
+        lbl_mon.setStyleSheet("font-size: 12px;")
+        self.combo_display_monitor = QComboBox(page_prefs)
+        self.combo_display_monitor.setFixedWidth(160)
+        self.combo_display_monitor.addItem("Primary Monitor", "primary")
+        from PySide6.QtGui import QGuiApplication
+        screens = QGuiApplication.screens()
+        for idx, scr in enumerate(screens):
+            self.combo_display_monitor.addItem(f"Monitor {idx + 1} ({scr.name()})", scr.name())
+        mon_layout.addWidget(lbl_mon)
+        mon_layout.addWidget(self.combo_display_monitor)
+        mon_layout.addStretch()
 
         layout_prefs.addWidget(self.chk_close_to_tray)
         layout_prefs.addWidget(self.lbl_close_to_tray_desc)
@@ -505,6 +528,11 @@ class SettingsDialog(QDialog):
         layout_prefs.addWidget(self.lbl_always_on_top_desc)
         layout_prefs.addWidget(self.chk_dynamic_island)
         layout_prefs.addWidget(self.lbl_dynamic_island_desc)
+        layout_prefs.addWidget(self.chk_fullscreen_auto_hide)
+        layout_prefs.addWidget(self.lbl_fullscreen_auto_hide_desc)
+        layout_prefs.addWidget(self.chk_lyrics_enabled)
+        layout_prefs.addWidget(self.lbl_lyrics_desc)
+        layout_prefs.addLayout(mon_layout)
         layout_prefs.addStretch()
 
         self.stacked_widget.addWidget(page_prefs)
@@ -571,6 +599,39 @@ class SettingsDialog(QDialog):
         line_di.setFrameShadow(QFrame.Shadow.Sunken)
         line_di.setStyleSheet(f"color: {COLOR_BORDER.name()};")
         layout_di.addWidget(line_di)
+
+        trigger_layout = QHBoxLayout()
+        lbl_trig = QLabel("Expansion Trigger:", page_di)
+        lbl_trig.setStyleSheet("font-size: 12px;")
+        self.combo_expand_trigger = QComboBox(page_di)
+        self.combo_expand_trigger.setFixedWidth(140)
+        self.combo_expand_trigger.addItem("Hover to Expand", "hover")
+        self.combo_expand_trigger.addItem("Click to Expand", "click")
+        trigger_layout.addWidget(lbl_trig)
+        trigger_layout.addWidget(self.combo_expand_trigger)
+        trigger_layout.addStretch()
+        layout_di.addLayout(trigger_layout)
+
+        intent_layout = QHBoxLayout()
+        lbl_intent = QLabel("Hover Intent Delay:", page_di)
+        lbl_intent.setStyleSheet("font-size: 12px;")
+        self.spn_hover_intent = QSpinBox(page_di)
+        self.spn_hover_intent.setRange(0, 1000)
+        self.spn_hover_intent.setSingleStep(50)
+        self.spn_hover_intent.setSuffix(" ms")
+        self.spn_hover_intent.setFixedWidth(130)
+        self.spn_hover_intent.setFixedHeight(30)
+        intent_layout.addWidget(lbl_intent)
+        intent_layout.addWidget(self.spn_hover_intent)
+        intent_layout.addStretch()
+        layout_di.addLayout(intent_layout)
+
+        lbl_intent_desc = QLabel(
+            "Delay before hover expands the notch, preventing accidental triggers when moving mouse past the top bezel.", page_di
+        )
+        lbl_intent_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px;")
+        lbl_intent_desc.setWordWrap(True)
+        layout_di.addWidget(lbl_intent_desc)
 
         delay_layout = QHBoxLayout()
         lbl_delay = QLabel("Collapse Delay:", page_di)
@@ -703,6 +764,18 @@ class SettingsDialog(QDialog):
         self.chk_eq_enabled.stateChanged.connect(self._on_audio_control_changed)
         layout_card.addWidget(self.chk_eq_enabled)
         layout_aud.addWidget(card_apo)
+
+        spec_layout = QHBoxLayout()
+        lbl_spec = QLabel("Visualizer Spectrum Mode:", aud_container)
+        lbl_spec.setStyleSheet("font-size: 11px;")
+        self.combo_spectrum_mode = QComboBox(aud_container)
+        self.combo_spectrum_mode.setFixedWidth(200)
+        self.combo_spectrum_mode.addItem("True FFT Frequency Spectrum", "fft")
+        self.combo_spectrum_mode.addItem("Time-Domain RMS Energy", "rms")
+        spec_layout.addWidget(lbl_spec)
+        spec_layout.addWidget(self.combo_spectrum_mode)
+        spec_layout.addStretch()
+        layout_aud.addLayout(spec_layout)
 
         slider_qss = (
             "QSlider::groove:horizontal { height: 4px; background: #2A2A2A; border-radius: 2px; }"
@@ -1059,6 +1132,20 @@ class SettingsDialog(QDialog):
         self.chk_dynamic_island.setChecked(
             self._settings_manager.get_dynamic_island_enabled()
         )
+        self.chk_fullscreen_auto_hide.setChecked(
+            self._settings_manager.get_fullscreen_auto_hide()
+        )
+        self.chk_lyrics_enabled.setChecked(
+            self._settings_manager.get_lyrics_enabled()
+        )
+        mon_idx = self.combo_display_monitor.findData(self._settings_manager.get_display_monitor())
+        if mon_idx >= 0:
+            self.combo_display_monitor.setCurrentIndex(mon_idx)
+
+        trig_idx = self.combo_expand_trigger.findData(self._settings_manager.get_expand_trigger())
+        if trig_idx >= 0:
+            self.combo_expand_trigger.setCurrentIndex(trig_idx)
+        self.spn_hover_intent.setValue(self._settings_manager.get_hover_intent_delay_ms())
 
         self.spn_collapse_delay.setValue(
             self._settings_manager.get_collapse_delay_ms()
@@ -1090,6 +1177,10 @@ class SettingsDialog(QDialog):
             v = bands[i] if i < len(bands) else 0.0
             sld.setValue(int(round(v * 10)))
 
+        spec_idx = self.combo_spectrum_mode.findData(self._settings_manager.get_spectrum_mode())
+        if spec_idx >= 0:
+            self.combo_spectrum_mode.setCurrentIndex(spec_idx)
+
         self._is_updating_ui = False
         self._on_audio_control_changed()
 
@@ -1108,6 +1199,24 @@ class SettingsDialog(QDialog):
             self.chk_dynamic_island.isChecked()
         )
         self._settings_manager.set_collapse_delay_ms(self.spn_collapse_delay.value())
+        self._settings_manager.set_fullscreen_auto_hide(
+            self.chk_fullscreen_auto_hide.isChecked()
+        )
+        self._settings_manager.set_lyrics_enabled(
+            self.chk_lyrics_enabled.isChecked()
+        )
+        self._settings_manager.set_display_monitor(
+            str(self.combo_display_monitor.currentData() or "primary")
+        )
+        self._settings_manager.set_expand_trigger(
+            str(self.combo_expand_trigger.currentData() or "hover")
+        )
+        self._settings_manager.set_hover_intent_delay_ms(
+            self.spn_hover_intent.value()
+        )
+        self._settings_manager.set_spectrum_mode(
+            str(self.combo_spectrum_mode.currentData() or "fft")
+        )
 
         # Save Audio & Equalizer Settings
         self._settings_manager.set_eq_enabled(self.chk_eq_enabled.isChecked())

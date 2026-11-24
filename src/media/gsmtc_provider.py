@@ -57,6 +57,9 @@ class GSMTCProvider(BaseMediaProvider):
         self._props_token = None
         self._playback_token = None
 
+        self._is_shuffle_active: Optional[bool] = None
+        self._auto_repeat_mode: int = 0
+
         self._current_track: TrackInfo = TrackInfo.empty()
         self._playback_status: PlaybackStatus = PlaybackStatus.CLOSED
         self._is_session_available: bool = False
@@ -211,6 +214,24 @@ class GSMTCProvider(BaseMediaProvider):
         fut = self._run_coroutine_on_loop(self._async_seek_to_position(session, ticks))
         return fut is not None
 
+    def toggle_shuffle(self) -> bool:
+        """Toggle shuffle playback state. Returns True if command was dispatched."""
+        with self._lock:
+            if not self._is_listening or not self._current_session:
+                return False
+            session = self._current_session
+        fut = self._run_coroutine_on_loop(self._async_toggle_shuffle(session))
+        return fut is not None
+
+    def toggle_repeat(self) -> bool:
+        """Toggle repeat playback mode (None -> Track -> List -> None). Returns True if command was dispatched."""
+        with self._lock:
+            if not self._is_listening or not self._current_session:
+                return False
+            session = self._current_session
+        fut = self._run_coroutine_on_loop(self._async_toggle_repeat(session))
+        return fut is not None
+
     # --- Async WinRT Control Coroutines ---
 
     async def _async_play(self, session) -> None:
@@ -260,6 +281,26 @@ class GSMTCProvider(BaseMediaProvider):
                 await session.try_change_playback_position_async(ticks)
         except Exception as e:
             logger.warning("Error executing try_change_playback_position_async: %s", e)
+
+    async def _async_toggle_shuffle(self, session) -> None:
+        """Coroutine executing session.try_change_shuffle_active_async()."""
+        try:
+            if session:
+                target = not bool(self._is_shuffle_active)
+                await session.try_change_shuffle_active_async(target)
+                self._is_shuffle_active = target
+        except Exception as e:
+            logger.warning("Error executing try_change_shuffle_active_async: %s", e)
+
+    async def _async_toggle_repeat(self, session) -> None:
+        """Coroutine executing session.try_change_auto_repeat_mode_async()."""
+        try:
+            if session:
+                next_mode = ((self._auto_repeat_mode or 0) + 1) % 3
+                await session.try_change_auto_repeat_mode_async(next_mode)
+                self._auto_repeat_mode = next_mode
+        except Exception as e:
+            logger.warning("Error executing try_change_auto_repeat_mode_async: %s", e)
 
 
 
@@ -637,6 +678,14 @@ class GSMTCProvider(BaseMediaProvider):
 
             status_val = getattr(info, "playback_status", None)
             mapped_status = self._map_playback_status(status_val)
+
+            # Read shuffle and repeat state
+            if hasattr(info, "is_shuffle_active"):
+                self._is_shuffle_active = info.is_shuffle_active
+            if hasattr(info, "auto_repeat_mode"):
+                mode = info.auto_repeat_mode
+                self._auto_repeat_mode = mode.value if hasattr(mode, "value") else int(mode or 0)
+
             self._update_playback_status(mapped_status)
         except Exception as e:
             logger.warning("Error fetching playback info: %s", e)

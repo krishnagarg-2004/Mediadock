@@ -75,6 +75,7 @@ class MediaCore(QObject):
             eq_enabled = mgr.get_eq_enabled()
 
             if self._analyzer:
+                self._analyzer.set_mode(mgr.get_spectrum_mode())
                 self._analyzer.set_eq_profile(
                     preamp_boost_db=preamp,
                     bass_db=bass,
@@ -266,6 +267,22 @@ class MediaCore(QObject):
             return self._provider.seek_to_position(position_ms)
         except Exception as e:
             logger.error("Error delegating seek_to_position command: %s", e)
+            return False
+
+    def toggle_shuffle(self) -> bool:
+        """Request active media player to toggle shuffle. Returns True if command was scheduled."""
+        try:
+            return self._provider.toggle_shuffle()
+        except Exception as e:
+            logger.error("Error delegating toggle_shuffle command: %s", e)
+            return False
+
+    def toggle_repeat(self) -> bool:
+        """Request active media player to toggle repeat mode. Returns True if command was scheduled."""
+        try:
+            return self._provider.toggle_repeat()
+        except Exception as e:
+            logger.error("Error delegating toggle_repeat command: %s", e)
             return False
 
 

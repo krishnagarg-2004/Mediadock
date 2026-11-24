@@ -67,6 +67,12 @@ class SettingsManager(QObject):
         "audio/eq_band_4000": 0.0,
         "audio/eq_band_16000": 0.0,
         "audio/eq_enabled": True,
+        "dynamic_island/expand_trigger": "hover",
+        "dynamic_island/hover_intent_delay_ms": 0,
+        "window/fullscreen_auto_hide": True,
+        "window/display_monitor": "primary",
+        "audio/spectrum_mode": "rms",
+        "features/lyrics_enabled": True,
     }
 
 
@@ -281,6 +287,58 @@ class SettingsManager(QObject):
     def set_eq_enabled(self, enabled: bool) -> None:
         """Set whether equalizer and audio enhancement processing is enabled."""
         self.set("audio/eq_enabled", bool(enabled))
+
+    def get_expand_trigger(self) -> str:
+        """Return expansion trigger mode: 'hover' or 'click'."""
+        val = str(self.get("dynamic_island/expand_trigger") or "hover").lower()
+        return "click" if val == "click" else "hover"
+
+    def set_expand_trigger(self, trigger: str) -> None:
+        """Set expansion trigger mode: 'hover' or 'click'."""
+        mode = "click" if str(trigger).lower() == "click" else "hover"
+        self.set("dynamic_island/expand_trigger", mode)
+
+    def get_hover_intent_delay_ms(self) -> int:
+        """Return hover intent delay before expansion in milliseconds (default 150ms)."""
+        return _to_int(self.get("dynamic_island/hover_intent_delay_ms"), 150)
+
+    def set_hover_intent_delay_ms(self, delay_ms: int) -> None:
+        """Set hover intent delay before expansion in milliseconds."""
+        self.set("dynamic_island/hover_intent_delay_ms", max(0, min(1000, int(delay_ms))))
+
+    def get_fullscreen_auto_hide(self) -> bool:
+        """Return True if MediaDock automatically hides when a fullscreen game/app is active."""
+        return bool(self.get("window/fullscreen_auto_hide"))
+
+    def set_fullscreen_auto_hide(self, enabled: bool) -> None:
+        """Set whether MediaDock automatically hides when a fullscreen game/app is active."""
+        self.set("window/fullscreen_auto_hide", bool(enabled))
+
+    def get_display_monitor(self) -> str:
+        """Return selected monitor string ('primary', 'monitor_1', etc.)."""
+        return str(self.get("window/display_monitor") or "primary")
+
+    def set_display_monitor(self, monitor: str) -> None:
+        """Set selected display monitor."""
+        self.set("window/display_monitor", str(monitor))
+
+    def get_spectrum_mode(self) -> str:
+        """Return audio spectrum analysis mode: 'fft' or 'rms'."""
+        val = str(self.get("audio/spectrum_mode") or "fft").lower()
+        return "rms" if val == "rms" else "fft"
+
+    def set_spectrum_mode(self, mode: str) -> None:
+        """Set audio spectrum analysis mode: 'fft' or 'rms'."""
+        val = "rms" if str(mode).lower() == "rms" else "fft"
+        self.set("audio/spectrum_mode", val)
+
+    def get_lyrics_enabled(self) -> bool:
+        """Return True if synchronized lyrics display is enabled."""
+        return bool(self.get("features/lyrics_enabled"))
+
+    def set_lyrics_enabled(self, enabled: bool) -> None:
+        """Set whether synchronized lyrics display is enabled."""
+        self.set("features/lyrics_enabled", bool(enabled))
 
     def sync(self) -> None:
         """Synchronize in-memory settings to persistent QSettings storage."""
