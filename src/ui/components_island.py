@@ -1,9 +1,9 @@
 """Dynamic Island presentation components: ReactiveVisualizerWidget and CollapsedCapsuleWidget."""
 
-import math
+from dataclasses import replace
 from typing import Optional, Union, List, Sequence
 from PySide6.QtCore import Qt, QTimer, QRectF, QTime
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QFont, QLinearGradient
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap, QFont
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel
 
 from src.core.models import PlaybackStatus
@@ -12,10 +12,11 @@ from src.ui.frameless_window import build_desknotch_path
 from src.ui.theme import (
     COLOR_BG_ISLAND,
     COLOR_BORDER_ISLAND,
-    COLOR_NOTCH_BORDER,
     COLOR_ACCENT_BLUE,
+    NotchAppearance,
     create_rounded_pixmap,
     get_svg_pixmap,
+    paint_notch_surface,
 )
 
 
@@ -168,6 +169,7 @@ class CollapsedNotchWidget(QWidget):
         self.setFixedSize(220, 34)
         self._bg_color = COLOR_BG_ISLAND  # #000000 obsidian base
         self._border_color = COLOR_BORDER_ISLAND  # #000000 pure black outer border
+        self._appearance = NotchAppearance()
         self._accent_color = COLOR_ACCENT_BLUE
         self._current_source_name: str = ""
         self._current_icon_name: str = "default_media"
@@ -305,41 +307,46 @@ class CollapsedNotchWidget(QWidget):
             self.pulse_bars.set_bar_color(color)
         self.update()
 
+    def set_appearance(self, appearance: NotchAppearance) -> None:
+        """Apply full NotchAppearance configuration (solid, gradient, or banner image)."""
+        if isinstance(appearance, NotchAppearance):
+            self._appearance = appearance
+            self._bg_color = QColor(appearance.bg_color)
+            self._border_color = QColor(appearance.border_color)
+            self.update()
+
     def set_appearance_colors(self, bg_color: QColor, border_color: QColor) -> None:
         """Update collapsed notch background and border colors from QColor instances."""
         if isinstance(bg_color, QColor) and bg_color.isValid():
             self._bg_color = QColor(bg_color)
         if isinstance(border_color, QColor) and border_color.isValid():
             self._border_color = QColor(border_color)
+        self._appearance = replace(
+            self._appearance,
+            bg_color=QColor(self._bg_color),
+            border_color=QColor(self._border_color),
+        )
         self.update()
 
     def paintEvent(self, event) -> None:
-        """Paint flush top-bezel DeskNotch flared-ear obsidian glass bar."""
+        """Paint flush top-bezel DeskNotch flared-ear bar (solid, gradient, or custom banner)."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         rect = QRectF(self.rect()).adjusted(0.5, 0.0, -0.5, -0.5)
         path = build_desknotch_path(rect, bottom_radius=14.0, ear_radius=8.0)
+        inner_path = build_desknotch_path(
+            rect.adjusted(1.0, 0.0, -1.0, -1.0), bottom_radius=13.0, ear_radius=8.0
+        )
 
-        painter.fillPath(path, self._bg_color)
-
-        sheen = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
-        sheen.setColorAt(0.0, QColor(255, 255, 255, 14))
-        sheen.setColorAt(0.5, QColor(255, 255, 255, 4))
-        sheen.setColorAt(1.0, QColor(255, 255, 255, 0))
-        painter.fillPath(path, sheen)
-
-        if self._border_color == COLOR_BORDER_ISLAND:
-            pen_inner = QPen(COLOR_NOTCH_BORDER, 1.0)
-            painter.setPen(pen_inner)
-            painter.drawPath(build_desknotch_path(rect.adjusted(1.0, 0.0, -1.0, -1.0), bottom_radius=13.0, ear_radius=8.0))
-            pen_width = 1.0
-        else:
-            pen_width = 1.5
-
-        pen = QPen(self._border_color, pen_width)
-        painter.setPen(pen)
-        painter.drawPath(path)
+        paint_notch_surface(
+            painter,
+            rect,
+            path,
+            inner_path,
+            self._appearance,
+            is_expanded=False,
+        )
         painter.end()
 
 

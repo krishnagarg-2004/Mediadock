@@ -4,19 +4,24 @@ import os
 import asyncio
 import logging
 import threading
-from typing import Optional, Callable, Set, List
+from typing import Optional, Callable, Set, List, Tuple
 
 try:
     import winrt.windows.media.control as media_control
     import winrt.windows.storage.streams as streams
+    try:
+        from winrt.windows.media import MediaPlaybackAutoRepeatMode
+    except ImportError:
+        MediaPlaybackAutoRepeatMode = None  # type: ignore[assignment]
     WINRT_AVAILABLE = True
 except ImportError:  # pragma: no cover
     WINRT_AVAILABLE = False
     media_control = None  # type: ignore[assignment]
     streams = None  # type: ignore[assignment]
+    MediaPlaybackAutoRepeatMode = None  # type: ignore[assignment]
 
 from src.core.models import TrackInfo, PlaybackStatus, MediaSessionInfo
-from src.media.base_provider import BaseMediaProvider, SessionsCallback
+from src.media.base_provider import BaseMediaProvider, SessionsCallback, PlaybackModesCallback
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +39,13 @@ class GSMTCProvider(BaseMediaProvider):
         on_status_changed: Optional[StatusCallback] = None,
         on_session_availability_changed: Optional[SessionAvailabilityCallback] = None,
         on_sessions_changed: Optional[SessionsCallback] = None,
+        on_playback_modes_changed: Optional[PlaybackModesCallback] = None,
     ) -> None:
         self._on_track_changed_cb = on_track_changed
         self._on_status_changed_cb = on_status_changed
         self._on_session_availability_changed_cb = on_session_availability_changed
         self._on_sessions_changed_cb = on_sessions_changed
+        self._on_playback_modes_changed_cb = on_playback_modes_changed
 
         self._lock = threading.RLock()
         self._is_listening = False
@@ -288,7 +295,9 @@ class GSMTCProvider(BaseMediaProvider):
             if session:
                 target = not bool(self._is_shuffle_active)
                 await session.try_change_shuffle_active_async(target)
-                self._is_shuffle_active = target
+                with self._lock:
+                    self._is_shuffle_active = target
+                self._notify_playback_modes_changed()
         except Exception as e:
             logger.warning("Error executing try_change_shuffle_active_async: %s", e)
 
@@ -297,14 +306,39 @@ class GSMTCProvider(BaseMediaProvider):
         try:
             if session:
                 next_mode = ((self._auto_repeat_mode or 0) + 1) % 3
-                await session.try_change_auto_repeat_mode_async(next_mode)
-                self._auto_repeat_mode = next_mode
+                arg = MediaPlaybackAutoRepeatMode(next_mode) if MediaPlaybackAutoRepeatMode is not None else next_mode
+                await session.try_change_auto_repeat_mode_async(arg)
+                with self._lock:
+                    self._auto_repeat_mode = next_mode
+                self._notify_playback_modes_changed()
         except Exception as e:
             logger.warning("Error executing try_change_auto_repeat_mode_async: %s", e)
 
 
 
     # --- Callback Registration Setters ---
+
+    def set_on_playback_modes_changed(self, callback: Optional[PlaybackModesCallback]) -> None:
+        """Register callback invoked when shuffle/repeat mode updates."""
+        with self._lock:
+            self._on_playback_modes_changed_cb = callback
+
+    def get_playback_modes(self) -> Tuple[Optional[bool], int]:
+        """Return (is_shuffle_active, auto_repeat_mode) cached from active session."""
+        with self._lock:
+            return (self._is_shuffle_active, self._auto_repeat_mode)
+
+    def _notify_playback_modes_changed(self) -> None:
+        """Invoke playback modes callback safely."""
+        with self._lock:
+            cb = self._on_playback_modes_changed_cb
+            shuf = self._is_shuffle_active
+            rep = self._auto_repeat_mode
+        if cb:
+            try:
+                cb(shuf, rep)
+            except Exception as e:
+                logger.error("Error in on_playback_modes_changed callback: %s", e)
 
     def set_on_track_changed(self, callback: Optional[TrackCallback]) -> None:
         with self._lock:
@@ -680,20 +714,30 @@ class GSMTCProvider(BaseMediaProvider):
             mapped_status = self._map_playback_status(status_val)
 
             # Safely read optional shuffle and repeat state without disrupting playback status
+            modes_changed = False
             try:
                 if hasattr(info, "is_shuffle_active"):
                     val = info.is_shuffle_active
-                    self._is_shuffle_active = bool(val) if val is not None else None
+                    new_shuf = bool(val) if val is not None else None
+                    if new_shuf != self._is_shuffle_active:
+                        self._is_shuffle_active = new_shuf
+                        modes_changed = True
                 if hasattr(info, "auto_repeat_mode"):
                     mode = info.auto_repeat_mode
                     if mode is None:
-                        self._auto_repeat_mode = 0
+                        new_rep = 0
                     elif hasattr(mode, "value"):
-                        self._auto_repeat_mode = int(mode.value)
+                        new_rep = int(mode.value)
                     else:
-                        self._auto_repeat_mode = int(mode)
+                        new_rep = int(mode)
+                    if new_rep != self._auto_repeat_mode:
+                        self._auto_repeat_mode = new_rep
+                        modes_changed = True
             except Exception:
                 pass
+
+            if modes_changed:
+                self._notify_playback_modes_changed()
 
             self._update_playback_status(mapped_status)
         except Exception as e:

@@ -1,5 +1,6 @@
 """Unit tests for src/ui/settings_dialog.py SettingsDialog UI component."""
 
+import os
 import sys
 import unittest
 from unittest.mock import patch, MagicMock
@@ -303,6 +304,134 @@ class TestSettingsDialog(unittest.TestCase):
         self.assertTrue(dlg.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground))
         self.assertIn(dlg._blur_backdrop_mode, ("dwm_acrylic", "composition_acrylic", "translucent"))
         self.assertIn("transparent", dlg.styleSheet())
+
+    @patch("src.utils.autostart.winreg")
+    def test_appearance_gradient_presets_styles_and_save(self, mock_winreg: MagicMock) -> None:
+        """Verify selecting gradient presets/styles updates previews and persists cleanly to MainWindow."""
+        from src.ui.main_window import DynamicIslandState
+        win = MainWindow(settings_manager=self.settings)
+        dlg = SettingsDialog(settings_manager=self.settings, parent=win)
+
+        preset_idx = dlg.combo_gradient_preset.findData("Sunset Ember")
+        self.assertGreaterEqual(preset_idx, 0)
+        dlg.combo_gradient_preset.setCurrentIndex(preset_idx)
+        self.assertEqual(dlg.combo_bg_mode.currentData(), "gradient")
+        self.assertEqual(dlg.txt_grad_color_1.text(), "#230812")
+        self.assertEqual(dlg.txt_grad_color_3.text(), "#D96B27")
+
+        # Editing stop hex switches preset to Custom & supports optional empty mid stop
+        dlg.txt_grad_color_2.setText("")
+        dlg.txt_grad_color_3.setText("#00ff7f")
+        self.assertEqual(dlg.combo_gradient_preset.currentData(), "Custom")
+
+        # Select radial/conic/mesh styles and save
+        for style_key in ("radial", "conic", "mesh"):
+            idx = dlg.combo_gradient_style.findData(style_key)
+            self.assertGreaterEqual(idx, 0)
+            dlg.combo_gradient_style.setCurrentIndex(idx)
+            dlg.save_settings()
+            self.assertEqual(self.settings.get_gradient_style(), style_key)
+            self.assertEqual(win._appearance.bg_mode, "gradient")
+            self.assertEqual(win._appearance.gradient_style, style_key)
+            self.assertEqual(win.notch_widget._appearance.gradient_style, style_key)
+
+        win.set_state(DynamicIslandState.EXPANDED, animate=False)
+        win.repaint()
+        win.notch_widget.repaint()
+        dlg.preview_collapsed_notch.repaint()
+        dlg.preview_expanded_card.repaint()
+
+    @patch("src.utils.autostart.winreg")
+    def test_appearance_custom_banner_images_expanded_and_collapsed(self, mock_winreg: MagicMock) -> None:
+        """Verify separate expanded/collapsed banner images persist, copy, crop, and paint safely."""
+        import tempfile
+        from PySide6.QtGui import QImage
+        from src.ui.main_window import DynamicIslandState
+
+        exp_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        col_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        exp_tmp.close()
+        col_tmp.close()
+        try:
+            img_exp = QImage(160, 80, QImage.Format.Format_ARGB32)
+            img_exp.fill(QColor("#2A4D8F"))
+            self.assertTrue(img_exp.save(exp_tmp.name, "PNG"))
+
+            img_col = QImage(120, 40, QImage.Format.Format_ARGB32)
+            img_col.fill(QColor("#8E1D41"))
+            self.assertTrue(img_col.save(col_tmp.name, "PNG"))
+
+            win = MainWindow(settings_manager=self.settings)
+            dlg = SettingsDialog(settings_manager=self.settings, parent=win)
+
+            img_mode_idx = dlg.combo_bg_mode.findData("image")
+            dlg.combo_bg_mode.setCurrentIndex(img_mode_idx)
+            dlg.txt_expanded_image_path.setText(exp_tmp.name)
+
+            # Copy Expanded to Collapsed button works
+            dlg.btn_copy_expanded_to_collapsed.click()
+            self.assertEqual(dlg.txt_collapsed_image_path.text(), exp_tmp.name)
+
+            # Now set distinct collapsed image, top alignment, and 45% dim
+            dlg.txt_collapsed_image_path.setText(col_tmp.name)
+            align_idx = dlg.combo_image_alignment.findData("top")
+            dlg.combo_image_alignment.setCurrentIndex(align_idx)
+            dlg.sld_image_dim.setValue(45)
+            dlg.save_settings()
+
+            self.assertEqual(self.settings.get_appearance_bg_mode(), "image")
+            self.assertEqual(self.settings.get_expanded_image_path(), exp_tmp.name)
+            self.assertEqual(self.settings.get_collapsed_image_path(), col_tmp.name)
+            self.assertEqual(self.settings.get_image_alignment(), "top")
+            self.assertEqual(self.settings.get_image_dim_percent(), 45)
+            self.assertEqual(win._appearance.expanded_image_path, exp_tmp.name)
+            self.assertEqual(win.notch_widget._appearance.collapsed_image_path, col_tmp.name)
+
+            win.set_state(DynamicIslandState.EXPANDED, animate=False)
+            win.repaint()
+            win.notch_widget.repaint()
+            dlg.preview_collapsed_notch.repaint()
+            dlg.preview_expanded_card.repaint()
+        finally:
+            for p in (exp_tmp.name, col_tmp.name):
+                if os.path.exists(p):
+                    try:
+                        os.unlink(p)
+                    except OSError:
+                        pass
+
+    @patch("src.utils.autostart.winreg")
+    def test_appearance_missing_banner_image_blocks_save(self, mock_winreg: MagicMock) -> None:
+        """Verify choosing Image mode without a valid banner image blocks save and warns on Appearance page."""
+        dlg = SettingsDialog(settings_manager=self.settings)
+        img_mode_idx = dlg.combo_bg_mode.findData("image")
+        dlg.combo_bg_mode.setCurrentIndex(img_mode_idx)
+        dlg.save_settings()
+
+        self.assertEqual(dlg.sidebar.currentRow(), 3)
+        self.assertFalse(dlg.lbl_appearance_error.isHidden())
+        self.assertEqual(self.settings.get_appearance_bg_mode(), "solid")
+
+    def test_audio_connection_controls_and_reject_restore(self) -> None:
+        """Verify Audio page exposes computer connection controls and Cancel restores saved audio profile."""
+        from src.core.models import VolumeState
+
+        mock_core = MagicMock()
+        mock_core.get_volume_state.return_value = VolumeState(volume_percent=52, is_muted=False, is_supported=True)
+        mock_core._analyzer = MagicMock()
+
+        dlg = SettingsDialog(settings_manager=self.settings, media_core=mock_core)
+        self.assertIn("52%", dlg.lbl_volume_status.text())
+        self.assertIsNotNone(dlg.btn_connect_audio)
+        self.assertIsNotNone(dlg.btn_audio_devices)
+        self.assertIsNotNone(dlg.btn_apply_audio_now)
+
+        dlg.sld_bass.setValue(60)
+        dlg.btn_apply_audio_now.click()
+        mock_core._analyzer.set_eq_profile.assert_called()
+
+        dlg.reject()
+        mock_core.sync_audio_settings.assert_called_with(self.settings)
 
 
 if __name__ == "__main__":

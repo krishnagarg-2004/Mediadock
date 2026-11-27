@@ -9,6 +9,7 @@ block_cipher = None
 
 # Hidden imports explicitly justified by GSMTCProvider (PyWinRT dynamic bindings)
 hidden_imports = [
+    "winrt.windows.media",
     "winrt.windows.media.control",
     "winrt.windows.storage.streams",
     "winrt.windows.foundation",

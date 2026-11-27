@@ -2,6 +2,7 @@
 
 import sys
 import time
+from dataclasses import replace
 from typing import Any, Optional
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QAbstractAnimation, QRect, QRectF, QEasingCurve, Signal
 from PySide6.QtGui import (
@@ -16,8 +17,6 @@ from PySide6.QtGui import (
     QPainterPath,
     QAction,
     QGuiApplication,
-    QRadialGradient,
-    QLinearGradient,
     QCursor,
 )
 
@@ -61,8 +60,8 @@ from src.ui.components_island import (
 )
 from src.ui.theme import (
     COLOR_BG_ISLAND,
-    COLOR_BORDER_ISLAND,
     COLOR_ACCENT_BLUE,
+    NotchAppearance,
     create_rounded_pixmap,
     extract_dominant_color,
     get_button_stylesheet,
@@ -71,6 +70,8 @@ from src.ui.theme import (
     get_slider_stylesheet,
     get_status_badge_style,
     get_svg_icon,
+    invalidate_banner_cache,
+    paint_notch_surface,
 )
 
 
@@ -132,6 +133,7 @@ class MainWindow(FramelessWindow):
     """Main application widget window for MediaDock with flush top-notch collapsed bar and oval expanded card."""
 
     open_settings_requested = Signal()
+    lyrics_loaded_signal = Signal(str, bool)
 
     def __init__(
         self,
@@ -148,6 +150,7 @@ class MainWindow(FramelessWindow):
         self._settings_manager = settings_manager or SettingsManager()
         self._custom_bg_override: bool = bg_color != COLOR_BG_ISLAND
         self._border_color: QColor = QColor(self._settings_manager.get_notch_border_color())
+        self._appearance: NotchAppearance = NotchAppearance.from_settings(self._settings_manager)
         self._default_art_pixmap = self._create_default_art_pixmap()
         self._is_pinned: bool = False
         self._manually_hidden: bool = False
@@ -177,6 +180,8 @@ class MainWindow(FramelessWindow):
         self._is_quitting: bool = False
         self._current_status: PlaybackStatus = PlaybackStatus.CLOSED
         self._current_accent: QColor = COLOR_ACCENT_BLUE
+        self._shuffle_active: Optional[bool] = None
+        self._repeat_mode: int = 0
 
         # Hover Intent Timer for expansion trigger
         self._hover_intent_timer = QTimer(self)
@@ -192,7 +197,10 @@ class MainWindow(FramelessWindow):
         self._fullscreen_timer.start()
 
         # Synchronized Lyrics Provider
-        self._lyrics_provider = LyricsProvider()
+        self.lyrics_loaded_signal.connect(self._on_lyrics_loaded)
+        self._lyrics_provider = LyricsProvider(
+            on_lyrics_loaded=lambda key, has_synced: self.lyrics_loaded_signal.emit(key, has_synced)
+        )
 
         # Setup subtle opacity fade animation effect for track changes
         self._opacity_effect = QGraphicsOpacityEffect(self)
@@ -321,6 +329,18 @@ class MainWindow(FramelessWindow):
             self._ear_radius = 0.0
             if self._collapse_timer.isActive():
                 self._collapse_timer.stop()
+
+            # Ensure lyrics label is correctly staged for expanded card
+            if self._settings_manager.get_lyrics_enabled() and self._lyrics_provider.has_synced_lyrics():
+                elapsed_ms = int((time.monotonic() - self._last_position_update_time) * 1000) if self._current_status == PlaybackStatus.PLAYING else 0
+                cur_pos = max(0, self._last_position_ms + elapsed_ms)
+                if self._duration_ms > 0:
+                    cur_pos = min(self._duration_ms, cur_pos)
+                lyric = self._lyrics_provider.get_current_lyric(cur_pos)
+                self.lyrics_label.setText(f"♪ {lyric}" if lyric else "♪  ♫  ♪")
+                self.lyrics_label.show()
+            else:
+                self.lyrics_label.hide()
 
             target_rect = self.compute_top_center_expanded_geometry()
 
@@ -470,7 +490,7 @@ class MainWindow(FramelessWindow):
                 self._enforce_topmost_zorder()
 
     def paintEvent(self, event) -> None:
-        """Paint flush top-bezel notch when collapsed and smooth rounded-oval obsidian shell when expanded."""
+        """Paint flush top-bezel notch when collapsed and smooth rounded-oval card when expanded."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -481,65 +501,35 @@ class MainWindow(FramelessWindow):
                 bottom_radius=self._border_radius,
                 ear_radius=self._ear_radius,
             )
+            inner_path = build_desknotch_path(
+                rect.adjusted(1.0, 0.0, -1.0, -1.0),
+                bottom_radius=max(1.0, float(self._border_radius) - 1.0),
+                ear_radius=self._ear_radius,
+            )
         else:
             rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
             radius = min(float(self._border_radius), rect.width() / 2.0, rect.height() / 2.0)
             path = QPainterPath()
             path.addRoundedRect(rect, radius, radius)
 
-        # Base obsidian shell
-        painter.fillPath(path, self._bg_color)
+            inner_rect = rect.adjusted(1.0, 1.0, -1.0, -1.0)
+            inner_radius = min(
+                max(1.0, float(self._border_radius) - 1.0),
+                inner_rect.width() / 2.0,
+                inner_rect.height() / 2.0,
+            )
+            inner_path = QPainterPath()
+            inner_path.addRoundedRect(inner_rect, inner_radius, inner_radius)
 
-        # Layered translucent frost top sheen
-        sheen = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
-        sheen.setColorAt(0.0, QColor(255, 255, 255, 14))
-        sheen.setColorAt(0.45, QColor(255, 255, 255, 5))
-        sheen.setColorAt(1.0, QColor(255, 255, 255, 2))
-        painter.fillPath(path, sheen)
-
-        # Radial cover glow anchored behind left artwork (when expanded)
-        if self._state == DynamicIslandState.EXPANDED and hasattr(self, "_current_accent"):
-            painter.save()
-            painter.setClipPath(path)
-            glow_cx = rect.left() + 68.0
-            glow_cy = rect.top() + 72.0
-            glow_grad = QRadialGradient(glow_cx, glow_cy, float(self.width() * 0.65))
-            c1 = QColor(self._current_accent)
-            c1.setAlpha(74)
-            c2 = QColor(self._current_accent)
-            c2.setAlpha(18)
-            glow_grad.setColorAt(0.0, c1)
-            glow_grad.setColorAt(0.55, c2)
-            glow_grad.setColorAt(1.0, QColor(0, 0, 0, 0))
-            painter.fillRect(self.rect(), glow_grad)
-            painter.restore()
-
-        if self._border_color == COLOR_BORDER_ISLAND:
-            # Subtle inner hairline border stroke when default black outer border is used
-            if self._ear_radius > 0.0:
-                inner_path = build_desknotch_path(
-                    rect.adjusted(1.0, 0.0, -1.0, -1.0),
-                    bottom_radius=max(1.0, float(self._border_radius) - 1.0),
-                    ear_radius=self._ear_radius,
-                )
-            else:
-                inner_rect = rect.adjusted(1.0, 1.0, -1.0, -1.0)
-                inner_radius = min(
-                    max(1.0, float(self._border_radius) - 1.0),
-                    inner_rect.width() / 2.0,
-                    inner_rect.height() / 2.0,
-                )
-                inner_path = QPainterPath()
-                inner_path.addRoundedRect(inner_rect, inner_radius, inner_radius)
-            painter.setPen(QPen(QColor(255, 255, 255, 22), 1.0))
-            painter.drawPath(inner_path)
-            pen_width = 1.0
-        else:
-            pen_width = 1.5
-
-        pen = QPen(self._border_color, pen_width)
-        painter.setPen(pen)
-        painter.drawPath(path)
+        paint_notch_surface(
+            painter,
+            rect,
+            path,
+            inner_path,
+            self._appearance,
+            is_expanded=(self._state == DynamicIslandState.EXPANDED),
+            ambient_accent=getattr(self, "_current_accent", None),
+        )
         painter.end()
 
     def compute_top_center_geometry(
@@ -588,7 +578,13 @@ class MainWindow(FramelessWindow):
 
     def _get_expanded_size(self) -> tuple[int, int]:
         """Return target expanded (width, height), adding room for the lyrics strip only when visible."""
-        extra_h = LYRICS_BAR_EXTRA_HEIGHT if (hasattr(self, "lyrics_label") and not self.lyrics_label.isHidden()) else 0
+        lyrics_visible = (hasattr(self, "lyrics_label") and not self.lyrics_label.isHidden()) or (
+            self._settings_manager.get_lyrics_enabled()
+            and hasattr(self, "_lyrics_provider")
+            and self._lyrics_provider.has_synced_lyrics()
+            and self._state == DynamicIslandState.EXPANDED
+        )
+        extra_h = LYRICS_BAR_EXTRA_HEIGHT if lyrics_visible else 0
         return (EXPANDED_SIZE[0], EXPANDED_SIZE[1] + extra_h)
 
     def _sync_expanded_geometry(self) -> None:
@@ -690,16 +686,37 @@ class MainWindow(FramelessWindow):
         if self.isVisible():
             self.show()
 
+    def _update_media_tile_style(self) -> None:
+        """Adjust inner #MediaTile frost tint slightly when using bright gradients or custom banners."""
+        if not hasattr(self, "_media_tile_frame"):
+            return
+        if self._appearance.bg_mode in ("gradient", "image"):
+            bg_rgba = "rgba(10, 10, 14, 0.28)"
+            border_rgba = "rgba(255, 255, 255, 0.14)"
+        else:
+            bg_rgba = "rgba(255, 255, 255, 0.04)"
+            border_rgba = "rgba(255, 255, 255, 0.08)"
+        self._media_tile_frame.setStyleSheet(
+            "QFrame#MediaTile {"
+            f"  background-color: {bg_rgba};"
+            f"  border: 1px solid {border_rgba};"
+            "  border-radius: 20px;"
+            "}"
+        )
+
     def _apply_appearance_colors(self) -> None:
-        """Apply configured hex background and border colors to shell and collapsed notch widget."""
-        bg_hex = self._settings_manager.get_notch_bg_color() if hasattr(self._settings_manager, "get_notch_bg_color") else "#000000"
-        border_hex = self._settings_manager.get_notch_border_color() if hasattr(self._settings_manager, "get_notch_border_color") else "#000000"
-        if not self._custom_bg_override and isinstance(bg_hex, str) and QColor(bg_hex).isValid():
-            self._bg_color = QColor(bg_hex)
-        if isinstance(border_hex, str) and QColor(border_hex).isValid():
-            self._border_color = QColor(border_hex)
+        """Apply configured solid colors, gradients, or custom banner images to notch and expanded card."""
+        appearance = NotchAppearance.from_settings(self._settings_manager)
+        if self._custom_bg_override:
+            appearance = replace(appearance, bg_color=QColor(self._bg_color))
+        else:
+            self._bg_color = QColor(appearance.bg_color)
+        self._border_color = QColor(appearance.border_color)
+        self._appearance = appearance
+
         if hasattr(self, "_capsule_widget"):
-            self._capsule_widget.set_appearance_colors(self._bg_color, self._border_color)
+            self._capsule_widget.set_appearance(self._appearance)
+        self._update_media_tile_style()
         self.update()
 
     def force_close(self) -> None:
@@ -740,7 +757,14 @@ class MainWindow(FramelessWindow):
             if not bool(value) and hasattr(self, "lyrics_label"):
                 self.lyrics_label.hide()
                 self._sync_expanded_geometry()
-        elif key in ("appearance/bg_color", "appearance/border_color"):
+            elif bool(value) and hasattr(self, "lyrics_label"):
+                cur_title = str(self.title_label.text() or "").strip()
+                cur_artist = str(self.artist_label.text() or "").strip()
+                if cur_title and cur_title != "No Media Playing":
+                    self._lyrics_provider.fetch_lyrics_async(cur_title, cur_artist, self._duration_ms)
+        elif key.startswith("appearance/"):
+            if key in ("appearance/collapsed_image_path", "appearance/expanded_image_path"):
+                invalidate_banner_cache()
             self._custom_bg_override = False
             self._apply_appearance_colors()
 
@@ -864,6 +888,7 @@ class MainWindow(FramelessWindow):
 
         self.btn_prev = QPushButton(self._media_tile_frame)
         self.btn_prev.setFixedSize(26, 26)
+        self.btn_prev.setToolTip("Previous Track")
         self.btn_prev.setStyleSheet(icon_btn_qss)
         self.btn_prev.setIcon(get_svg_icon("previous", 14, QColor("#E0E0E0")))
         self.btn_prev.clicked.connect(self._on_btn_prev_clicked)
@@ -871,12 +896,14 @@ class MainWindow(FramelessWindow):
         # Signature DeskNotch solid white circular Play/Pause disc with pitch-black glyph
         self.btn_play_pause = QPushButton(self._media_tile_frame)
         self.btn_play_pause.setFixedSize(34, 34)
+        self.btn_play_pause.setToolTip("Play / Pause")
         self.btn_play_pause.setStyleSheet(play_btn_qss)
         self.btn_play_pause.setIcon(get_svg_icon("play", 16, QColor("#000000")))
         self.btn_play_pause.clicked.connect(self._on_btn_play_pause_clicked)
 
         self.btn_next = QPushButton(self._media_tile_frame)
         self.btn_next.setFixedSize(26, 26)
+        self.btn_next.setToolTip("Next Track")
         self.btn_next.setStyleSheet(icon_btn_qss)
         self.btn_next.setIcon(get_svg_icon("next", 14, QColor("#E0E0E0")))
         self.btn_next.clicked.connect(self._on_btn_next_clicked)
@@ -884,12 +911,16 @@ class MainWindow(FramelessWindow):
         # Shuffle & Repeat Toggles
         self.btn_shuffle = QPushButton(self._media_tile_frame)
         self.btn_shuffle.setFixedSize(24, 24)
+        self.btn_shuffle.setCheckable(True)
+        self.btn_shuffle.setToolTip("Shuffle: Off")
         self.btn_shuffle.setStyleSheet(icon_btn_qss)
         self.btn_shuffle.setIcon(get_svg_icon("shuffle", 12, QColor(255, 255, 255, 165)))
         self.btn_shuffle.clicked.connect(self._on_btn_shuffle_clicked)
 
         self.btn_repeat = QPushButton(self._media_tile_frame)
         self.btn_repeat.setFixedSize(24, 24)
+        self.btn_repeat.setCheckable(True)
+        self.btn_repeat.setToolTip("Repeat: Off")
         self.btn_repeat.setStyleSheet(icon_btn_qss)
         self.btn_repeat.setIcon(get_svg_icon("repeat", 12, QColor(255, 255, 255, 165)))
         self.btn_repeat.clicked.connect(self._on_btn_repeat_clicked)
@@ -897,6 +928,7 @@ class MainWindow(FramelessWindow):
         # Volume & Mute Controls
         self.btn_mute = QPushButton(self._media_tile_frame)
         self.btn_mute.setFixedSize(24, 24)
+        self.btn_mute.setToolTip("Mute Computer Audio")
         self.btn_mute.setStyleSheet(icon_btn_qss)
         self.btn_mute.setIcon(get_svg_icon("volume", 13, QColor(255, 255, 255, 165)))
         self.btn_mute.clicked.connect(self._on_btn_mute_clicked)
@@ -904,7 +936,8 @@ class MainWindow(FramelessWindow):
         self.slider_volume = QSlider(Qt.Orientation.Horizontal, self._media_tile_frame)
         self.slider_volume.setRange(0, 100)
         self.slider_volume.setValue(100)
-        self.slider_volume.setFixedWidth(40)
+        self.slider_volume.setFixedWidth(50)
+        self.slider_volume.setToolTip("System Volume")
         self.slider_volume.setStyleSheet(get_slider_stylesheet(self._current_accent))
         self.slider_volume.valueChanged.connect(self._on_volume_slider_changed)
 
@@ -995,6 +1028,8 @@ class MainWindow(FramelessWindow):
             )
         if hasattr(self._media_core, "sessions_changed"):
             self._media_core.sessions_changed.connect(self.on_sessions_changed)
+        if hasattr(self._media_core, "playback_modes_changed"):
+            self._media_core.playback_modes_changed.connect(self.on_playback_modes_changed)
 
         # Initial display sync
         self.on_track_changed(self._media_core.get_current_track())
@@ -1003,6 +1038,12 @@ class MainWindow(FramelessWindow):
         self.on_volume_changed(self._media_core.get_volume_state())
         if hasattr(self._media_core, "get_available_sessions"):
             self.on_sessions_changed(self._media_core.get_available_sessions())
+        if hasattr(self._media_core, "get_playback_modes"):
+            modes = self._media_core.get_playback_modes()
+            if isinstance(modes, (tuple, list)) and len(modes) == 2:
+                shuf = modes[0] if (modes[0] is None or isinstance(modes[0], bool)) else None
+                rep = int(modes[1]) if isinstance(modes[1], int) and not isinstance(modes[1], bool) else 0
+                self.on_playback_modes_changed(shuf, rep)
 
 
     # --- Button & Slider Click Handlers ---
@@ -1093,9 +1134,36 @@ class MainWindow(FramelessWindow):
             finally:
                 self._is_setting_volume = False
 
-        icon_color = QColor("#A6ADC8") if state.is_muted else QColor("#CDD6F4")
+        icon_color = QColor("#C1121C") if state.is_muted else QColor("#FFFFFF")
         icon_name = "mute" if state.is_muted or state.volume_percent == 0 else "volume"
         self.btn_mute.setIcon(get_svg_icon(icon_name, 14, icon_color))
+        self.slider_volume.setToolTip(f"System Volume: {state.volume_percent}%")
+        self.btn_mute.setToolTip("Unmute Computer Audio" if state.is_muted else "Mute Computer Audio")
+
+    def on_playback_modes_changed(self, shuffle_active: Optional[bool], repeat_mode: int) -> None:
+        """Update Shuffle and Repeat button checked states, icons, and tooltips from active session."""
+        self._shuffle_active = shuffle_active
+        self._repeat_mode = max(0, min(2, int(repeat_mode or 0)))
+
+        muted_col = QColor(255, 255, 255, 165)
+        active_col = self._current_accent if hasattr(self, "_current_accent") else QColor("#00FF7F")
+
+        if hasattr(self, "btn_shuffle"):
+            shuf_on = bool(shuffle_active)
+            self.btn_shuffle.setChecked(shuf_on)
+            self.btn_shuffle.setIcon(get_svg_icon("shuffle", 12, active_col if shuf_on else muted_col))
+            self.btn_shuffle.setToolTip("Shuffle: On" if shuf_on else "Shuffle: Off")
+
+        if hasattr(self, "btn_repeat"):
+            rep_on = self._repeat_mode in (1, 2)
+            self.btn_repeat.setChecked(rep_on)
+            self.btn_repeat.setIcon(get_svg_icon("repeat", 12, active_col if rep_on else muted_col))
+            if self._repeat_mode == 1:
+                self.btn_repeat.setToolTip("Repeat: Current Track")
+            elif self._repeat_mode == 2:
+                self.btn_repeat.setToolTip("Repeat: All / Playlist")
+            else:
+                self.btn_repeat.setToolTip("Repeat: Off")
 
 
     # --- Seeking State Machine ---
@@ -1117,32 +1185,73 @@ class MainWindow(FramelessWindow):
         self._last_position_update_time = time.monotonic()
         self._is_seeking = False
 
+        if self._settings_manager.get_lyrics_enabled() and self._lyrics_provider.has_synced_lyrics():
+            lyric = self._lyrics_provider.get_current_lyric(target_ms)
+            self.lyrics_label.setText(f"♪ {lyric}" if lyric else "♪  ♫  ♪")
+            if self._state == DynamicIslandState.EXPANDED:
+                self.lyrics_label.show()
+
     # --- UI Position Interpolation Tick ---
 
     def _on_position_timer_tick(self) -> None:
         """UI-side position interpolation running on 250ms QTimer when PLAYING."""
-        if self._current_status != PlaybackStatus.PLAYING or self._duration_ms <= 0:
+        if self._current_status != PlaybackStatus.PLAYING:
             return
 
         elapsed_ms = int((time.monotonic() - self._last_position_update_time) * 1000)
-        current_pos_ms = min(self._duration_ms, max(0, self._last_position_ms + elapsed_ms))
-
-        self.lbl_position.setText(_format_time_ms(current_pos_ms))
-
-        if not self._is_seeking:
-            self.progress_slider.setValue(current_pos_ms)
+        if self._duration_ms > 0:
+            current_pos_ms = min(self._duration_ms, max(0, self._last_position_ms + elapsed_ms))
+            self.lbl_position.setText(_format_time_ms(current_pos_ms))
+            if not self._is_seeking:
+                self.progress_slider.setValue(current_pos_ms)
+        else:
+            current_pos_ms = max(0, self._last_position_ms + elapsed_ms)
+            self.lbl_position.setText(_format_time_ms(current_pos_ms))
 
         # Update synchronized lyrics preview line in dedicated full-width strip
         was_hidden = self.lyrics_label.isHidden()
         if self._settings_manager.get_lyrics_enabled():
-            lyric = self._lyrics_provider.get_current_lyric(current_pos_ms)
-            if lyric:
-                self.lyrics_label.setText(f"♪ {lyric}")
-                self.lyrics_label.show()
+            if self._lyrics_provider.has_synced_lyrics():
+                lyric = self._lyrics_provider.get_current_lyric(current_pos_ms)
+                self.lyrics_label.setText(f"♪ {lyric}" if lyric else "♪  ♫  ♪")
+                if self._state == DynamicIslandState.EXPANDED:
+                    self.lyrics_label.show()
+                else:
+                    self.lyrics_label.hide()
             else:
                 self.lyrics_label.hide()
         else:
             self.lyrics_label.hide()
+        if was_hidden != self.lyrics_label.isHidden():
+            self._sync_expanded_geometry()
+
+    def _on_lyrics_loaded(self, track_key: str, has_lyrics: bool) -> None:
+        """Qt slot invoked on main GUI thread when lyrics finish fetching."""
+        if not self._settings_manager.get_lyrics_enabled():
+            self.lyrics_label.hide()
+            self._sync_expanded_geometry()
+            return
+
+        cur_title = str(self.title_label.text() or "").strip()
+        cur_artist = str(self.artist_label.text() or "").strip()
+        cur_track_key = f"{cur_artist.lower()} - {cur_title.lower()}"
+
+        if track_key != cur_track_key and track_key != f"{self._last_lyric_track_sig[1].lower()} - {self._last_lyric_track_sig[0].lower()}":
+            return
+
+        was_hidden = self.lyrics_label.isHidden()
+        if has_lyrics:
+            elapsed_ms = int((time.monotonic() - self._last_position_update_time) * 1000) if self._current_status == PlaybackStatus.PLAYING else 0
+            current_pos_ms = max(0, self._last_position_ms + elapsed_ms)
+            if self._duration_ms > 0:
+                current_pos_ms = min(self._duration_ms, current_pos_ms)
+            lyric = self._lyrics_provider.get_current_lyric(current_pos_ms)
+            self.lyrics_label.setText(f"♪ {lyric}" if lyric else "♪  ♫  ♪")
+            if self._state == DynamicIslandState.EXPANDED:
+                self.lyrics_label.show()
+        else:
+            self.lyrics_label.hide()
+
         if was_hidden != self.lyrics_label.isHidden():
             self._sync_expanded_geometry()
 
@@ -1203,6 +1312,7 @@ class MainWindow(FramelessWindow):
         self._capsule_widget.set_accent_color(self._current_accent)
         self._visualizer.set_bar_color(self._current_accent)
         self._apply_lyrics_style(self._current_accent)
+        self.on_playback_modes_changed(self._shuffle_active, self._repeat_mode)
         self.update()
 
         # Timeline state update
@@ -1218,7 +1328,11 @@ class MainWindow(FramelessWindow):
 
         self.lbl_position.setText(_format_time_ms(self._last_position_ms))
         if not self._is_seeking:
-            self.progress_slider.setValue(min(self._last_position_ms, self._duration_ms))
+            self.progress_slider.setValue(min(self._last_position_ms, self._duration_ms) if self._duration_ms > 0 else self._last_position_ms)
+
+        # Ensure position timer is ticking if currently playing
+        if self._current_status == PlaybackStatus.PLAYING and not self._position_timer.isActive():
+            self._position_timer.start()
 
         # Trigger smooth opacity transition
         self._trigger_track_fade_animation()
@@ -1257,7 +1371,7 @@ class MainWindow(FramelessWindow):
 
         if status == PlaybackStatus.PLAYING:
             self.btn_play_pause.setIcon(get_svg_icon("pause", 16, QColor("#000000")))
-            if self._duration_ms > 0 and not self._position_timer.isActive():
+            if not self._position_timer.isActive():
                 self._position_timer.start()
             if (
                 self._settings_manager.get_dynamic_island_enabled()
@@ -1279,6 +1393,8 @@ class MainWindow(FramelessWindow):
         self.btn_prev.setEnabled(available)
         self.btn_play_pause.setEnabled(available)
         self.btn_next.setEnabled(available)
+        self.btn_shuffle.setEnabled(available)
+        self.btn_repeat.setEnabled(available)
         self.progress_slider.setEnabled(available)
 
         if available:

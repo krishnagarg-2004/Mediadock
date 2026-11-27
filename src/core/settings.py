@@ -81,14 +81,25 @@ class SettingsManager(QObject):
         "audio/eq_band_4000": 0.0,
         "audio/eq_band_16000": 0.0,
         "audio/eq_enabled": True,
+        "audio/connection_prompted": False,
         "dynamic_island/expand_trigger": "hover",
         "dynamic_island/hover_intent_delay_ms": 0,
         "window/fullscreen_auto_hide": False,
         "window/display_monitor": "primary",
         "audio/spectrum_mode": "rms",
         "features/lyrics_enabled": True,
+        "appearance/bg_mode": "solid",
         "appearance/bg_color": "#000000",
         "appearance/border_color": "#000000",
+        "appearance/gradient_preset": "Aurora",
+        "appearance/gradient_style": "linear_diag",
+        "appearance/gradient_color_1": "#071A20",
+        "appearance/gradient_color_2": "#0F5257",
+        "appearance/gradient_color_3": "#1B3B6F",
+        "appearance/collapsed_image_path": "",
+        "appearance/expanded_image_path": "",
+        "appearance/image_dim_percent": 35,
+        "appearance/image_alignment": "center",
     }
 
 
@@ -304,6 +315,14 @@ class SettingsManager(QObject):
         """Set whether equalizer and audio enhancement processing is enabled."""
         self.set("audio/eq_enabled", bool(enabled))
 
+    def get_audio_connection_prompted(self) -> bool:
+        """Return whether the one-time Windows audio permission prompt has already been shown."""
+        return bool(self.get("audio/connection_prompted"))
+
+    def set_audio_connection_prompted(self, prompted: bool) -> None:
+        """Record whether the one-time Windows audio permission prompt was shown."""
+        self.set("audio/connection_prompted", bool(prompted))
+
     def get_expand_trigger(self) -> str:
         """Return expansion trigger mode: 'hover' or 'click'."""
         val = str(self.get("dynamic_island/expand_trigger") or "hover").lower()
@@ -377,6 +396,104 @@ class SettingsManager(QObject):
         parsed = parse_hex_color(hex_color)
         if parsed is not None:
             self.set("appearance/border_color", parsed)
+
+    def get_appearance_bg_mode(self) -> str:
+        """Return background fill mode: 'solid', 'gradient', or 'image'."""
+        val = str(self.get("appearance/bg_mode") or "solid").strip().lower()
+        return val if val in ("solid", "gradient", "image") else "solid"
+
+    def set_appearance_bg_mode(self, mode: str) -> None:
+        """Set background fill mode ('solid', 'gradient', or 'image')."""
+        val = str(mode or "solid").strip().lower()
+        if val in ("solid", "gradient", "image"):
+            self.set("appearance/bg_mode", val)
+
+    def get_gradient_preset(self) -> str:
+        """Return configured gradient preset name or 'Custom'."""
+        val = str(self.get("appearance/gradient_preset") or "Aurora").strip()
+        return val if val else "Aurora"
+
+    def set_gradient_preset(self, preset: str) -> None:
+        """Set configured gradient preset name."""
+        val = str(preset or "Custom").strip() or "Custom"
+        self.set("appearance/gradient_preset", val)
+
+    def get_gradient_style(self) -> str:
+        """Return gradient geometry style key."""
+        valid = ("linear_diag", "linear_h", "linear_v", "linear_diag_rev", "radial", "conic", "mesh")
+        val = str(self.get("appearance/gradient_style") or "linear_diag").strip().lower()
+        return val if val in valid else "linear_diag"
+
+    def set_gradient_style(self, style: str) -> None:
+        """Set gradient geometry style key."""
+        valid = ("linear_diag", "linear_h", "linear_v", "linear_diag_rev", "radial", "conic", "mesh")
+        val = str(style or "linear_diag").strip().lower()
+        if val in valid:
+            self.set("appearance/gradient_style", val)
+
+    def get_gradient_colors(self) -> Tuple[str, str, str]:
+        """Return (start_hex, optional_mid_hex, end_hex) tuple for notch gradients."""
+        c1 = parse_hex_color(self.get("appearance/gradient_color_1")) or "#071A20"
+        raw_mid = str(self.get("appearance/gradient_color_2") or "").strip()
+        c2 = parse_hex_color(raw_mid) or "" if raw_mid else ""
+        c3 = parse_hex_color(self.get("appearance/gradient_color_3")) or "#1B3B6F"
+        return (c1, c2, c3)
+
+    def set_gradient_colors(self, start_hex: str, mid_hex: str, end_hex: str) -> None:
+        """Persist validated gradient stop hex colors (mid_hex may be empty for 2-stop gradients)."""
+        c1 = parse_hex_color(start_hex)
+        c3 = parse_hex_color(end_hex)
+        raw_mid = str(mid_hex or "").strip()
+        c2 = parse_hex_color(raw_mid) if raw_mid else ""
+        if c1 is not None:
+            self.set("appearance/gradient_color_1", c1)
+        if c2 is not None:
+            self.set("appearance/gradient_color_2", c2)
+        if c3 is not None:
+            self.set("appearance/gradient_color_3", c3)
+
+    @staticmethod
+    def _clean_image_path(path: Any) -> str:
+        """Normalize user-entered image path while stripping accidental outer quotes."""
+        text = str(path or "").strip()
+        if len(text) >= 2 and ((text[0] == '"' and text[-1] == '"') or (text[0] == "'" and text[-1] == "'")):
+            text = text[1:-1].strip()
+        return text
+
+    def get_collapsed_image_path(self) -> str:
+        """Return custom banner image file path for collapsed notch."""
+        return self._clean_image_path(self.get("appearance/collapsed_image_path"))
+
+    def set_collapsed_image_path(self, path: str) -> None:
+        """Set custom banner image file path for collapsed notch."""
+        self.set("appearance/collapsed_image_path", self._clean_image_path(path))
+
+    def get_expanded_image_path(self) -> str:
+        """Return custom banner image file path for expanded card."""
+        return self._clean_image_path(self.get("appearance/expanded_image_path"))
+
+    def set_expanded_image_path(self, path: str) -> None:
+        """Set custom banner image file path for expanded card."""
+        self.set("appearance/expanded_image_path", self._clean_image_path(path))
+
+    def get_image_dim_percent(self) -> int:
+        """Return banner overlay scrim opacity percentage (0-85%)."""
+        return max(0, min(85, _to_int(self.get("appearance/image_dim_percent"), 35)))
+
+    def set_image_dim_percent(self, percent: int) -> None:
+        """Set banner overlay scrim opacity percentage (clamped 0-85%)."""
+        self.set("appearance/image_dim_percent", max(0, min(85, _to_int(percent, 35))))
+
+    def get_image_alignment(self) -> str:
+        """Return vertical crop anchor for custom banners: 'center', 'top', or 'bottom'."""
+        val = str(self.get("appearance/image_alignment") or "center").strip().lower()
+        return val if val in ("center", "top", "bottom") else "center"
+
+    def set_image_alignment(self, alignment: str) -> None:
+        """Set vertical crop anchor for custom banners ('center', 'top', or 'bottom')."""
+        val = str(alignment or "center").strip().lower()
+        if val in ("center", "top", "bottom"):
+            self.set("appearance/image_alignment", val)
 
     def sync(self) -> None:
         """Synchronize in-memory settings to persistent QSettings storage."""

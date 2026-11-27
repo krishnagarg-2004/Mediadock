@@ -10,11 +10,12 @@ Welcome to **MediaDock**! This guide covers installing, configuring, and operati
 - **Python**: Python 3.10+ (Python 3.14 recommended) when running from source code.
 - **Dependencies**: Listed in [requirements.txt](../requirements.txt):
   - `PySide6>=6.6.0`
-  - `winrt-Windows.Foundation>=3.0.0`
-  - `winrt-Windows.Media.Control>=3.0.0`
-  - `winrt-Windows.Storage.Streams>=3.0.0`
+  - `winrt-Windows.Foundation>=3.0.0,<4.0.0`
+  - `winrt-Windows.Media>=3.0.0,<4.0.0`
+  - `winrt-Windows.Media.Control>=3.0.0,<4.0.0`
+  - `winrt-Windows.Storage.Streams>=3.0.0,<4.0.0`
   - `pyinstaller>=6.0.0`
-- **Optional System Equalizer**: Install **Equalizer APO** if you want real-time system-wide preamp volume boost (+12 dB) and parametric EQ applied to Windows audio output. Even without Equalizer APO, MediaDock's EQ sliders dynamically react with the notch visualizer bars.
+- **Optional System Equalizer**: MediaDock prompts once on startup (or via **Settings → Audio & Equalizer → Allow & Connect Audio...**) for permission to install/configure **Equalizer APO** so Preamp Boost (`+12 dB`), Tone sliders, and the 5-band EQ apply directly to your speakers/headphones as well as the notch visualizer.
 
 ---
 
@@ -75,7 +76,7 @@ Open the frosted Gaussian-blur **Settings** window (`820×600` px) via the notch
 - **Global Shortcuts**: Customize OS-wide shortcuts for **Show/Hide MediaDock** (default: `Ctrl+Alt+S`) and **Toggle Play/Pause** (default: `Ctrl+Alt+Space`).
   - Supports 2-key or 3-key combinations (`Ctrl`, `Alt`, `Shift`, `Win` + `A-Z`, `0-9`, `Space`, `Tab`, `Return`, `F1-F24`).
 - **Dynamic Island**: Configure **Expansion Trigger** (*Hover to Expand* or *Click to Expand*), **Hover Intent Delay** (`0–1000 ms`), and **Collapse Delay** (`500–30000 ms`).
-- **Appearance**: Customize the notch **Background** and **Border** colors using 6-digit `#RRGGBB` hex color codes with live swatches, real-time preview, and **Reset Default** (`#000000`).
+- **Appearance**: Choose **Background Style** (*Solid Color*, *Gradient*, or *Custom Banner Image*), customize solid background & border `#RRGGBB` hex colors, pick from 8 gradient presets or custom 2/3-stop hex colors across 7 gradient styles (*Diagonal*, *Horizontal*, *Vertical*, *Reverse Diagonal*, *Radial*, *Conic Sweep*, *Mesh*), or select custom image banners (`PNG`, `JPG`, `WEBP`, `BMP`) separately for the **Expanded Card** and **Collapsed Notch** with crop focus, `0–85%` readability dim slider, and live dual Collapsed/Expanded previews.
 - **Audio & Equalizer**: Choose **Visualizer Spectrum Mode** (*True FFT Frequency Spectrum* or *Time-Domain RMS Energy*), adjust Preamp Volume Boost (`0` to `+12 dB`), Bass/Clarity/Treble tone controls, Noise Gate (`0%–50%`), and the 5-band graphic EQ with presets.
 - **About**: View version details, clickable GitHub repository/issue links, and runtime shortcut summary.
 

@@ -213,6 +213,48 @@ class TestVolumeSystem(unittest.TestCase):
         self.assertFalse(pixmap_muted.isNull())
         self.assertEqual(pixmap_muted.width(), 16)
 
+    def test_windows_coreaudio_real_endpoint_supported_on_windows(self) -> None:
+        """Verify WindowsVolumeProvider binds real CoreAudio endpoint when audio hardware is present."""
+        import sys
+        provider = WindowsVolumeProvider()
+        try:
+            if sys.platform == "win32":
+                state = provider.get_volume_state()
+                self.assertTrue(state.is_supported)
+                self.assertGreaterEqual(state.volume_percent, 0)
+                self.assertLessEqual(state.volume_percent, 100)
+        finally:
+            provider.stop_listening()
+
+    def test_shuffle_repeat_buttons_sync_playback_modes_and_availability(self) -> None:
+        """Verify Shuffle and Repeat buttons sync checked states, tooltips, and availability lock."""
+        media_prov = DummyMediaProvider()
+        vol_prov = DummyVolumeProvider(supported=True, volume=50, muted=False)
+        core = MediaCore(provider=media_prov, volume_provider=vol_prov)
+        window = MainWindow(media_core=core)
+
+        window.on_session_availability_changed(False)
+        self.assertFalse(window.btn_shuffle.isEnabled())
+        self.assertFalse(window.btn_repeat.isEnabled())
+
+        window.on_session_availability_changed(True)
+        self.assertTrue(window.btn_shuffle.isEnabled())
+        self.assertTrue(window.btn_repeat.isEnabled())
+
+        core._on_provider_playback_modes_changed(True, 1)
+        self.assertTrue(window.btn_shuffle.isChecked())
+        self.assertEqual(window.btn_shuffle.toolTip(), "Shuffle: On")
+        self.assertTrue(window.btn_repeat.isChecked())
+        self.assertEqual(window.btn_repeat.toolTip(), "Repeat: Current Track")
+
+        core._on_provider_playback_modes_changed(False, 2)
+        self.assertFalse(window.btn_shuffle.isChecked())
+        self.assertEqual(window.btn_repeat.toolTip(), "Repeat: All / Playlist")
+
+        core._on_provider_playback_modes_changed(False, 0)
+        self.assertFalse(window.btn_repeat.isChecked())
+        self.assertEqual(window.btn_repeat.toolTip(), "Repeat: Off")
+
 
 if __name__ == "__main__":
     unittest.main()

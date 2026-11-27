@@ -204,155 +204,180 @@ class WASAPILoopbackCapture(BaseAudioCapture):
                 ("cbSize", WORD),
             ]
 
-        device_enum = c_void_p()
-        hr = ole32.CoCreateInstance(
-            byref(CLSID_MMDeviceEnumerator),
-            None,
-            1,  # CLSCTX_INPROC_SERVER
-            byref(IID_IMMDeviceEnumerator),
-            byref(device_enum),
-        )
-        if hr != 0 or not device_enum:
-            logger.warning("WASAPI: Failed to CoCreate MMDeviceEnumerator: %s", hex(hr & 0xFFFFFFFF))
-            return False
-
-        vtbl_enum = cast(device_enum, POINTER(POINTER(c_void_p))).contents
-        get_default_endpoint = WINFUNCTYPE(HRESULT, c_void_p, c_int, c_int, POINTER(c_void_p))(vtbl_enum[4])
-
-        device = c_void_p()
-        hr = get_default_endpoint(device_enum, 0, 0, byref(device))  # eRender=0, eConsole=0
-        if hr != 0 or not device:
-            logger.warning("WASAPI: Failed to get default audio endpoint: %s", hex(hr & 0xFFFFFFFF))
-            return False
-
-        vtbl_dev = cast(device, POINTER(POINTER(c_void_p))).contents
-        activate = WINFUNCTYPE(HRESULT, c_void_p, POINTER(GUID), DWORD, c_void_p, POINTER(c_void_p))(vtbl_dev[3])
-
-        audio_client = c_void_p()
-        hr = activate(device, byref(IID_IAudioClient), 1, None, byref(audio_client))
-        if hr != 0 or not audio_client:
-            logger.warning("WASAPI: Failed to activate IAudioClient interface: %s", hex(hr & 0xFFFFFFFF))
-            return False
-
-        vtbl_client = cast(audio_client, POINTER(POINTER(c_void_p))).contents
-
-        get_mix_format = WINFUNCTYPE(HRESULT, c_void_p, POINTER(POINTER(WAVEFORMATEX)))(vtbl_client[8])
-        pwfx = POINTER(WAVEFORMATEX)()
-        hr = get_mix_format(audio_client, byref(pwfx))
-        if hr != 0 or not pwfx:
-            logger.warning("WASAPI: Failed to get audio mix format: %s", hex(hr & 0xFFFFFFFF))
-            return False
-
-        wfx = pwfx.contents
-        sample_rate = int(wfx.nSamplesPerSec)
-        channels = int(wfx.nChannels)
-
-        AUDCLNT_SHAREMODE_SHARED = 0
-        AUDCLNT_STREAMFLAGS_LOOPBACK = 0x00020000
-
-        init_client = WINFUNCTYPE(
-            HRESULT, c_void_p, c_int, DWORD, c_int64, c_int64, POINTER(WAVEFORMATEX), c_void_p
-        )(vtbl_client[3])
-        hr = init_client(
-            audio_client,
-            AUDCLNT_SHAREMODE_SHARED,
-            AUDCLNT_STREAMFLAGS_LOOPBACK,
-            self._buffer_duration_hnsec,
-            0,
-            pwfx,
-            None,
-        )
-        if hr != 0:
-            logger.warning("WASAPI: Failed to initialize IAudioClient in loopback mode: %s", hex(hr & 0xFFFFFFFF))
-            return False
-
-        get_service = WINFUNCTYPE(HRESULT, c_void_p, POINTER(GUID), POINTER(c_void_p))(vtbl_client[14])
         capture_client = c_void_p()
-        hr = get_service(audio_client, byref(IID_IAudioCaptureClient), byref(capture_client))
-        if hr != 0 or not capture_client:
-            logger.warning("WASAPI: Failed to get IAudioCaptureClient service: %s", hex(hr & 0xFFFFFFFF))
-            return False
+        audio_client = c_void_p()
+        device = c_void_p()
+        device_enum = c_void_p()
+        pwfx = POINTER(WAVEFORMATEX)()
 
-        vtbl_cap = cast(capture_client, POINTER(POINTER(c_void_p))).contents
-        start_client = WINFUNCTYPE(HRESULT, c_void_p)(vtbl_client[10])
-        stop_client = WINFUNCTYPE(HRESULT, c_void_p)(vtbl_client[11])
-        get_buffer = WINFUNCTYPE(
-            HRESULT,
-            c_void_p,
-            POINTER(POINTER(BYTE)),
-            POINTER(c_uint32),
-            POINTER(DWORD),
-            POINTER(c_int64),
-            POINTER(c_int64),
-        )(vtbl_cap[3])
-        release_buffer = WINFUNCTYPE(HRESULT, c_void_p, c_uint32)(vtbl_cap[4])
-        get_next_packet_size = WINFUNCTYPE(HRESULT, c_void_p, POINTER(c_uint32))(vtbl_cap[5])
-
-        hr = start_client(audio_client)
-        if hr != 0:
-            logger.warning("WASAPI: Failed to start IAudioClient: %s", hex(hr & 0xFFFFFFFF))
-            return False
-
-        p_data = POINTER(BYTE)()
-        num_frames = c_uint32()
-        flags = DWORD()
-        device_pos = c_int64()
-        qpc_pos = c_int64()
-        packet_size = c_uint32()
+        def _release_ptr(ptr) -> None:
+            if not ptr:
+                return
+            try:
+                from ctypes import c_ulong
+                vtbl = cast(ptr, POINTER(POINTER(c_void_p))).contents
+                WINFUNCTYPE(c_ulong, c_void_p)(vtbl[2])(ptr)
+            except Exception:
+                pass
 
         try:
-            while not self._stop_event.is_set():
-                hr = get_next_packet_size(capture_client, byref(packet_size))
-                if hr != 0:
-                    code = hr & 0xFFFFFFFF
-                    if code in (AUDCLNT_E_DEVICE_INVALIDATED, AUDCLNT_E_RESOURCES_INVALIDATED, AUDCLNT_E_SERVICE_NOT_RUNNING):
-                        logger.warning("WASAPI: Audio device invalidated or service stopped: %s", hex(code))
-                        return False
-                    time.sleep(0.01)
-                    continue
+            hr = ole32.CoCreateInstance(
+                byref(CLSID_MMDeviceEnumerator),
+                None,
+                1,  # CLSCTX_INPROC_SERVER
+                byref(IID_IMMDeviceEnumerator),
+                byref(device_enum),
+            )
+            if hr != 0 or not device_enum:
+                logger.warning("WASAPI: Failed to CoCreate MMDeviceEnumerator: %s", hex(hr & 0xFFFFFFFF))
+                return False
 
-                packets_drained = 0
-                while packet_size.value > 0 and not self._stop_event.is_set():
-                    hr = get_buffer(
-                        capture_client,
-                        byref(p_data),
-                        byref(num_frames),
-                        byref(flags),
-                        byref(device_pos),
-                        byref(qpc_pos),
-                    )
+            vtbl_enum = cast(device_enum, POINTER(POINTER(c_void_p))).contents
+            get_default_endpoint = WINFUNCTYPE(HRESULT, c_void_p, c_int, c_int, POINTER(c_void_p))(vtbl_enum[4])
+
+            hr = get_default_endpoint(device_enum, 0, 0, byref(device))  # eRender=0, eConsole=0
+            if hr != 0 or not device:
+                logger.warning("WASAPI: Failed to get default audio endpoint: %s", hex(hr & 0xFFFFFFFF))
+                return False
+
+            vtbl_dev = cast(device, POINTER(POINTER(c_void_p))).contents
+            activate = WINFUNCTYPE(HRESULT, c_void_p, POINTER(GUID), DWORD, c_void_p, POINTER(c_void_p))(vtbl_dev[3])
+
+            hr = activate(device, byref(IID_IAudioClient), 1, None, byref(audio_client))
+            if hr != 0 or not audio_client:
+                logger.warning("WASAPI: Failed to activate IAudioClient interface: %s", hex(hr & 0xFFFFFFFF))
+                return False
+
+            vtbl_client = cast(audio_client, POINTER(POINTER(c_void_p))).contents
+
+            get_mix_format = WINFUNCTYPE(HRESULT, c_void_p, POINTER(POINTER(WAVEFORMATEX)))(vtbl_client[8])
+            hr = get_mix_format(audio_client, byref(pwfx))
+            if hr != 0 or not pwfx:
+                logger.warning("WASAPI: Failed to get audio mix format: %s", hex(hr & 0xFFFFFFFF))
+                return False
+
+            wfx = pwfx.contents
+            sample_rate = int(wfx.nSamplesPerSec)
+            channels = int(wfx.nChannels)
+
+            AUDCLNT_SHAREMODE_SHARED = 0
+            AUDCLNT_STREAMFLAGS_LOOPBACK = 0x00020000
+
+            init_client = WINFUNCTYPE(
+                HRESULT, c_void_p, c_int, DWORD, c_int64, c_int64, POINTER(WAVEFORMATEX), c_void_p
+            )(vtbl_client[3])
+            hr = init_client(
+                audio_client,
+                AUDCLNT_SHAREMODE_SHARED,
+                AUDCLNT_STREAMFLAGS_LOOPBACK,
+                self._buffer_duration_hnsec,
+                0,
+                pwfx,
+                None,
+            )
+            if hr != 0:
+                logger.warning("WASAPI: Failed to initialize IAudioClient in loopback mode: %s", hex(hr & 0xFFFFFFFF))
+                return False
+
+            get_service = WINFUNCTYPE(HRESULT, c_void_p, POINTER(GUID), POINTER(c_void_p))(vtbl_client[14])
+            hr = get_service(audio_client, byref(IID_IAudioCaptureClient), byref(capture_client))
+            if hr != 0 or not capture_client:
+                logger.warning("WASAPI: Failed to get IAudioCaptureClient service: %s", hex(hr & 0xFFFFFFFF))
+                return False
+
+            vtbl_cap = cast(capture_client, POINTER(POINTER(c_void_p))).contents
+            start_client = WINFUNCTYPE(HRESULT, c_void_p)(vtbl_client[10])
+            stop_client = WINFUNCTYPE(HRESULT, c_void_p)(vtbl_client[11])
+            get_buffer = WINFUNCTYPE(
+                HRESULT,
+                c_void_p,
+                POINTER(POINTER(BYTE)),
+                POINTER(c_uint32),
+                POINTER(DWORD),
+                POINTER(c_int64),
+                POINTER(c_int64),
+            )(vtbl_cap[3])
+            release_buffer = WINFUNCTYPE(HRESULT, c_void_p, c_uint32)(vtbl_cap[4])
+            get_next_packet_size = WINFUNCTYPE(HRESULT, c_void_p, POINTER(c_uint32))(vtbl_cap[5])
+
+            hr = start_client(audio_client)
+            if hr != 0:
+                logger.warning("WASAPI: Failed to start IAudioClient: %s", hex(hr & 0xFFFFFFFF))
+                return False
+
+            p_data = POINTER(BYTE)()
+            num_frames = c_uint32()
+            flags = DWORD()
+            device_pos = c_int64()
+            qpc_pos = c_int64()
+            packet_size = c_uint32()
+
+            try:
+                while not self._stop_event.is_set():
+                    hr = get_next_packet_size(capture_client, byref(packet_size))
                     if hr != 0:
                         code = hr & 0xFFFFFFFF
                         if code in (AUDCLNT_E_DEVICE_INVALIDATED, AUDCLNT_E_RESOURCES_INVALIDATED, AUDCLNT_E_SERVICE_NOT_RUNNING):
-                            logger.warning("WASAPI: Audio device invalidated during GetBuffer: %s", hex(code))
+                            logger.warning("WASAPI: Audio device invalidated or service stopped: %s", hex(code))
                             return False
-                        break
+                        time.sleep(0.01)
+                        continue
 
-                    frames = num_frames.value
-                    if frames > 0 and p_data:
-                        sample_count = frames * channels
-                        float_ptr = cast(p_data, POINTER(c_float))
-                        samples = [float_ptr[i] for i in range(sample_count)]
-
-                        frame = AudioFrame(
-                            samples=samples,
-                            sample_rate=sample_rate,
-                            channels=channels,
-                            frame_count=frames,
+                    packets_drained = 0
+                    while packet_size.value > 0 and not self._stop_event.is_set():
+                        hr = get_buffer(
+                            capture_client,
+                            byref(p_data),
+                            byref(num_frames),
+                            byref(flags),
+                            byref(device_pos),
+                            byref(qpc_pos),
                         )
-                        self._notify_audio_frame(frame)
+                        if hr != 0:
+                            code = hr & 0xFFFFFFFF
+                            if code in (AUDCLNT_E_DEVICE_INVALIDATED, AUDCLNT_E_RESOURCES_INVALIDATED, AUDCLNT_E_SERVICE_NOT_RUNNING):
+                                logger.warning("WASAPI: Audio device invalidated during GetBuffer: %s", hex(code))
+                                return False
+                            break
 
-                    release_buffer(capture_client, frames)
-                    packets_drained += 1
-                    get_next_packet_size(capture_client, byref(packet_size))
+                        frames = num_frames.value
+                        if frames > 0 and p_data:
+                            sample_count = frames * channels
+                            float_ptr = cast(p_data, POINTER(c_float))
+                            samples = [float_ptr[i] for i in range(sample_count)]
 
-                if packets_drained == 0:
-                    time.sleep(0.01)
+                            frame = AudioFrame(
+                                samples=samples,
+                                sample_rate=sample_rate,
+                                channels=channels,
+                                frame_count=frames,
+                            )
+                            self._notify_audio_frame(frame)
 
+                        release_buffer(capture_client, frames)
+                        packets_drained += 1
+                        get_next_packet_size(capture_client, byref(packet_size))
+
+                    if packets_drained == 0:
+                        time.sleep(0.01)
+
+            finally:
+                try:
+                    stop_client(audio_client)
+                except Exception:
+                    pass
+
+            return True
         finally:
-            stop_client(audio_client)
-
-        return True
+            if pwfx:
+                try:
+                    ole32.CoTaskMemFree(pwfx)
+                except Exception:
+                    pass
+            _release_ptr(capture_client)
+            _release_ptr(audio_client)
+            _release_ptr(device)
+            _release_ptr(device_enum)
 
     def _notify_audio_frame(self, frame: AudioFrame) -> None:
         """Invoke registered audio frame callback safely."""

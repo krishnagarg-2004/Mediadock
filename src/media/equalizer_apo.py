@@ -4,10 +4,13 @@ Detects Equalizer APO installation on Windows, formats standard biquad/peaking
 filter configuration, and synchronizes settings with Equalizer APO's config directory.
 """
 
+import ctypes
 import os
 import sys
 import logging
-from typing import List, Optional, Tuple
+import tempfile
+import urllib.request
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +20,7 @@ DEFAULT_APO_EXE = r"C:\Program Files\EqualizerAPO\EqualizerAPO.exe"
 MEDIADOCK_CONFIG_FILENAME = "mediadock_eq.txt"
 MASTER_CONFIG_FILENAME = "config.txt"
 EQUALIZER_APO_DOWNLOAD_URL = "https://equalizerapo.com/download.html"
+EQUALIZER_APO_INSTALLER_URL = "https://sourceforge.net/projects/equalizerapo/files/latest/download"
 
 
 class EqualizerAPOManager:
@@ -164,3 +168,273 @@ class EqualizerAPOManager:
         except (OSError, PermissionError) as e:
             logger.warning("Could not write Equalizer APO config: %s", e)
             return False
+
+    def get_device_selector_path(self) -> Optional[str]:
+        """Return path to Equalizer APO DeviceSelector.exe (v1.4+) or Configurator.exe (v1.3)."""
+        install_root = os.path.dirname(self._config_dir)
+        for exe_name in ("DeviceSelector.exe", "Configurator.exe"):
+            candidate = os.path.join(install_root, exe_name)
+            if os.path.isfile(candidate):
+                return candidate
+        return None
+
+    def get_connection_status(self) -> Dict[str, object]:
+        """Inspect Equalizer APO install state, write permission, and master config Include link."""
+        installed = self.is_installed()
+        config_dir_exists = os.path.isdir(self._config_dir)
+        writable = False
+        include_configured = False
+
+        if config_dir_exists:
+            mediadock_path = os.path.join(self._config_dir, MEDIADOCK_CONFIG_FILENAME)
+            master_path = os.path.join(self._config_dir, MASTER_CONFIG_FILENAME)
+            include_directive = f"Include: {MEDIADOCK_CONFIG_FILENAME}"
+
+            if os.path.isfile(master_path):
+                try:
+                    with open(master_path, "r", encoding="utf-8", errors="ignore") as f:
+                        include_configured = include_directive in f.read()
+                except OSError:
+                    include_configured = False
+
+            # Probe actual write capability safely without destroying existing profile
+            probe_target = mediadock_path if os.path.exists(mediadock_path) else os.path.join(self._config_dir, ".mediadock_write_probe")
+            try:
+                if os.path.exists(mediadock_path):
+                    with open(mediadock_path, "r+", encoding="utf-8"):
+                        pass
+                else:
+                    with open(probe_target, "w", encoding="utf-8") as f:
+                        f.write("")
+                    os.unlink(probe_target)
+                writable = True
+            except OSError:
+                writable = False
+
+        return {
+            "installed": installed,
+            "config_dir_exists": config_dir_exists,
+            "writable": writable,
+            "include_configured": include_configured,
+            "connected": bool(installed and config_dir_exists and writable and include_configured),
+            "device_selector_path": self.get_device_selector_path(),
+        }
+
+    @staticmethod
+    def _run_elevated(executable: str, parameters: str, wait: bool = True, timeout_ms: int = 120000) -> Tuple[bool, int]:
+        """Launch a Windows executable with UAC elevation ('runas') via ShellExecuteExW."""
+        if sys.platform != "win32":
+            return (False, -1)
+
+        try:
+            class _SHELLEXECUTEINFOW(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", ctypes.c_ulong),
+                    ("fMask", ctypes.c_ulong),
+                    ("hwnd", ctypes.c_void_p),
+                    ("lpVerb", ctypes.c_wchar_p),
+                    ("lpFile", ctypes.c_wchar_p),
+                    ("lpParameters", ctypes.c_wchar_p),
+                    ("lpDirectory", ctypes.c_wchar_p),
+                    ("nShow", ctypes.c_int),
+                    ("hInstApp", ctypes.c_void_p),
+                    ("lpIDList", ctypes.c_void_p),
+                    ("lpClass", ctypes.c_wchar_p),
+                    ("hkeyClass", ctypes.c_void_p),
+                    ("dwHotKey", ctypes.c_ulong),
+                    ("hIcon", ctypes.c_void_p),
+                    ("hProcess", ctypes.c_void_p),
+                ]
+
+            SEE_MASK_NOCLOSEPROCESS = 0x00000040
+            SW_HIDE = 0
+            SW_SHOWNORMAL = 1
+
+            info = _SHELLEXECUTEINFOW()
+            info.cbSize = ctypes.sizeof(_SHELLEXECUTEINFOW)
+            info.fMask = SEE_MASK_NOCLOSEPROCESS
+            info.hwnd = None
+            info.lpVerb = "runas"
+            info.lpFile = executable
+            info.lpParameters = parameters
+            info.lpDirectory = os.path.dirname(executable) if os.path.isabs(executable) else None
+            info.nShow = SW_HIDE if "powershell" in executable.lower() else SW_SHOWNORMAL
+
+            shell32 = ctypes.windll.shell32
+            kernel32 = ctypes.windll.kernel32
+            if not shell32.ShellExecuteExW(ctypes.byref(info)):
+                return (False, ctypes.GetLastError())
+
+            exit_code = 0
+            if wait and info.hProcess:
+                kernel32.WaitForSingleObject(info.hProcess, timeout_ms)
+                code = ctypes.c_ulong()
+                if kernel32.GetExitCodeProcess(info.hProcess, ctypes.byref(code)):
+                    exit_code = int(code.value)
+            if info.hProcess:
+                kernel32.CloseHandle(info.hProcess)
+            return (exit_code == 0, exit_code)
+        except Exception as e:
+            logger.warning("Elevated execution failed: %s", e)
+            return (False, -1)
+
+    def configure_permissions_elevated(
+        self,
+        preamp_boost_db: float = 0.0,
+        bass_db: float = 0.0,
+        clarity_db: float = 0.0,
+        treble_db: float = 0.0,
+        eq_bands: Optional[List[float]] = None,
+        eq_enabled: bool = True,
+    ) -> Tuple[bool, str]:
+        """Request Windows UAC elevation once to wire config.txt and grant Users write access to mediadock_eq.txt."""
+        if not os.path.isdir(self._config_dir):
+            return (False, "Equalizer APO config folder was not found.")
+
+        if self.apply_eq(preamp_boost_db, bass_db, clarity_db, treble_db, eq_bands, eq_enabled):
+            return (True, "Equalizer APO is connected and writable.")
+
+        mediadock_path = os.path.join(self._config_dir, MEDIADOCK_CONFIG_FILENAME)
+        master_path = os.path.join(self._config_dir, MASTER_CONFIG_FILENAME)
+        eq_content = self.generate_config_text(
+            preamp_boost_db=preamp_boost_db,
+            bass_db=bass_db,
+            clarity_db=clarity_db,
+            treble_db=treble_db,
+            eq_bands=eq_bands,
+            eq_enabled=eq_enabled,
+        )
+
+        # Stage script cleanly in a temporary file to avoid quoting/escaping bugs
+        tmp_eq = tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w", encoding="utf-8")
+        tmp_eq.write(eq_content)
+        tmp_eq.close()
+
+        tmp_ps = tempfile.NamedTemporaryFile(delete=False, suffix=".ps1", mode="w", encoding="utf-8")
+        ps_body = f"""$ErrorActionPreference = 'Stop'
+$configDir = {repr(self._config_dir)}
+$targetEq = {repr(mediadock_path)}
+$targetMaster = {repr(master_path)}
+$stagedEq = {repr(tmp_eq.name)}
+if (-not (Test-Path $configDir)) {{ New-Item -ItemType Directory -Path $configDir -Force | Out-Null }}
+Copy-Item -Path $stagedEq -Destination $targetEq -Force
+$inc = 'Include: {MEDIADOCK_CONFIG_FILENAME}'
+if (Test-Path $targetMaster) {{
+    $cur = Get-Content -Path $targetMaster -Raw -ErrorAction SilentlyContinue
+    if ($null -eq $cur -or -not $cur.Contains($inc)) {{
+        Add-Content -Path $targetMaster -Value ("`r`n" + $inc) -Encoding UTF8
+    }}
+}} else {{
+    Set-Content -Path $targetMaster -Value $inc -Encoding UTF8
+}}
+& icacls $targetEq /grant "*S-1-5-32-545:(M)" | Out-Null
+& icacls $targetMaster /grant "*S-1-5-32-545:(M)" | Out-Null
+"""
+        tmp_ps.write(ps_body)
+        tmp_ps.close()
+
+        try:
+            ok, err = self._run_elevated(
+                "powershell.exe",
+                f'-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{tmp_ps.name}"',
+                wait=True,
+                timeout_ms=60000,
+            )
+            if not ok:
+                return (False, "Administrator permission was cancelled or failed while configuring Equalizer APO.")
+            if self.apply_eq(preamp_boost_db, bass_db, clarity_db, treble_db, eq_bands, eq_enabled):
+                return (True, "Permissions granted. Equalizer & Audio Booster are now connected live to Windows audio.")
+            return (False, "Setup finished, but config directory is still not writable.")
+        finally:
+            for p in (tmp_eq.name, tmp_ps.name):
+                if os.path.exists(p):
+                    try:
+                        os.unlink(p)
+                    except OSError:
+                        pass
+
+    @staticmethod
+    def download_installer(
+        url: str = EQUALIZER_APO_INSTALLER_URL,
+        progress_cb=None,
+    ) -> Tuple[Optional[str], str]:
+        """Download official Equalizer APO Windows installer into temp storage and verify PE header."""
+        dest_path = os.path.join(tempfile.gettempdir(), "MediaDock_EqualizerAPO_Setup.exe")
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "MediaDock/1.0 (+https://github.com/krishnagarg-2004/Mediadock)"},
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                total = int(resp.headers.get("Content-Length") or 0)
+                downloaded = 0
+                with open(dest_path, "wb") as out:
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        downloaded += len(chunk)
+                        if progress_cb and total > 0:
+                            progress_cb(int(min(100, (downloaded * 100) / total)))
+
+            if not os.path.isfile(dest_path) or os.path.getsize(dest_path) < 500_000:
+                return (None, "Downloaded file was incomplete or not a valid installer.")
+
+            with open(dest_path, "rb") as f:
+                if f.read(2) != b"MZ":
+                    return (None, "Downloaded file was not a valid Windows .exe installer.")
+
+            return (dest_path, "")
+        except Exception as e:
+            return (None, f"Download failed: {e}")
+
+    def connect_system_audio(
+        self,
+        preamp_boost_db: float = 0.0,
+        bass_db: float = 0.0,
+        clarity_db: float = 0.0,
+        treble_db: float = 0.0,
+        eq_bands: Optional[List[float]] = None,
+        eq_enabled: bool = True,
+        progress_cb=None,
+    ) -> Tuple[bool, str, bool]:
+        """Install (if missing) and/or configure UAC permissions so Equalizer APO connects live to Windows.
+
+        Returns:
+            (success, human_message, newly_installed)
+        """
+        newly_installed = False
+        if not self.is_installed():
+            installer_path, dl_err = self.download_installer(progress_cb=progress_cb)
+            if not installer_path:
+                return (False, dl_err or "Unable to download Equalizer APO installer.", False)
+
+            ok, _ = self._run_elevated(installer_path, "/S", wait=True, timeout_ms=180000)
+            if not ok or not self.is_installed():
+                return (False, "Equalizer APO installation was cancelled or did not complete.", False)
+            newly_installed = True
+
+        ok, msg = self.configure_permissions_elevated(
+            preamp_boost_db=preamp_boost_db,
+            bass_db=bass_db,
+            clarity_db=clarity_db,
+            treble_db=treble_db,
+            eq_bands=eq_bands,
+            eq_enabled=eq_enabled,
+        )
+        return (ok, msg, newly_installed)
+
+    def launch_device_selector(self) -> bool:
+        """Open Equalizer APO Device Selector (or Windows Sound settings fallback) so user picks output devices."""
+        selector = self.get_device_selector_path()
+        if selector and sys.platform == "win32":
+            # Launch elevated without waiting so user can configure devices immediately
+            if ctypes.windll.shell32.ShellExecuteW(None, "runas", selector, None, os.path.dirname(selector), 1) > 32:
+                return True
+        if sys.platform == "win32":
+            try:
+                return ctypes.windll.shell32.ShellExecuteW(None, "open", "control.exe", "mmsys.cpl sounds", None, 1) > 32
+            except Exception:
+                return False
+        return False

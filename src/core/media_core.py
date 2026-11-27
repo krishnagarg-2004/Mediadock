@@ -1,7 +1,7 @@
 """MediaCore event coordinator bridging media providers to PySide6 Qt signals."""
 
 import logging
-from typing import Optional, Any
+from typing import Optional, Any, Tuple
 
 from PySide6.QtCore import QObject, Signal
 
@@ -24,6 +24,7 @@ class MediaCore(QObject):
     sessions_changed = Signal(list)
     volume_changed = Signal(VolumeState)
     audio_visualizer_updated = Signal(list)
+    playback_modes_changed = Signal(object, int)
 
     def __init__(
         self,
@@ -106,6 +107,8 @@ class MediaCore(QObject):
             self._on_provider_session_availability_changed
         )
         self._provider.set_on_sessions_changed(self._on_provider_sessions_changed)
+        if hasattr(self._provider, "set_on_playback_modes_changed"):
+            self._provider.set_on_playback_modes_changed(self._on_provider_playback_modes_changed)
         self._volume_provider.set_on_volume_changed(self._on_provider_volume_changed)
         if self._audio_capture:
             self._audio_capture.set_on_audio_frame(self._on_provider_audio_frame)
@@ -285,6 +288,19 @@ class MediaCore(QObject):
             logger.error("Error delegating toggle_repeat command: %s", e)
             return False
 
+    def get_playback_modes(self) -> Tuple[Optional[bool], int]:
+        """Return active (shuffle_active, repeat_mode) state tuple cleanly."""
+        try:
+            if hasattr(self._provider, "get_playback_modes"):
+                raw = self._provider.get_playback_modes()
+                if isinstance(raw, (tuple, list)) and len(raw) == 2:
+                    shuf = raw[0] if (raw[0] is None or isinstance(raw[0], bool)) else None
+                    rep = int(raw[1]) if isinstance(raw[1], int) and not isinstance(raw[1], bool) else 0
+                    return (shuf, rep)
+        except Exception as e:
+            logger.error("Error reading playback modes: %s", e)
+        return (None, 0)
+
 
     # --- Internal Callback Handlers (Cross-Thread Signal Emitters) ---
 
@@ -331,3 +347,10 @@ class MediaCore(QObject):
                 self.audio_visualizer_updated.emit(bars)
         except Exception as e:
             logger.error("Error emitting audio_visualizer_updated signal: %s", e)
+
+    def _on_provider_playback_modes_changed(self, shuffle_active: Optional[bool], repeat_mode: int) -> None:
+        """Emit playback_modes_changed signal safely when shuffle or repeat changes."""
+        try:
+            self.playback_modes_changed.emit(shuffle_active, int(repeat_mode))
+        except Exception as e:
+            logger.error("Error emitting playback_modes_changed signal: %s", e)

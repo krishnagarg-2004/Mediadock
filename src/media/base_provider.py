@@ -1,13 +1,14 @@
 """Abstract base class for media detection providers."""
 
 from abc import ABC, abstractmethod
-from typing import Optional, Callable, List
+from typing import Optional, Callable, List, Tuple
 from src.core.models import TrackInfo, PlaybackStatus, MediaSessionInfo
 
 TrackCallback = Callable[[TrackInfo], None]
 StatusCallback = Callable[[PlaybackStatus], None]
 SessionAvailabilityCallback = Callable[[bool], None]
 SessionsCallback = Callable[[List[MediaSessionInfo]], None]
+PlaybackModesCallback = Callable[[Optional[bool], int], None]
 
 
 class BaseMediaProvider(ABC):
@@ -108,3 +109,13 @@ class BaseMediaProvider(ABC):
     def toggle_repeat(self) -> bool:
         """Toggle repeat playback mode (None -> Track -> List -> None). Returns True if command was dispatched."""
         return False
+
+    def set_on_playback_modes_changed(
+        self, callback: Optional[PlaybackModesCallback]
+    ) -> None:
+        """Register callback invoked when shuffle or repeat mode updates."""
+        pass
+
+    def get_playback_modes(self) -> Tuple[Optional[bool], int]:
+        """Return (is_shuffle_active, auto_repeat_mode) tuple."""
+        return (None, 0)

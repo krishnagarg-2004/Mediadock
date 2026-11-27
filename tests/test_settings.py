@@ -269,6 +269,43 @@ class TestSettingsManager(unittest.TestCase):
         self.assertEqual(self.settings.get_notch_bg_color(), "#10141C")
         self.assertEqual(self.settings.get_notch_border_color(), "#00FF7F")
 
+    def test_gradient_and_banner_appearance_settings(self) -> None:
+        """Verify gradient presets/styles/stops and expanded/collapsed banner persistence & validation."""
+        self.assertEqual(self.settings.get_appearance_bg_mode(), "solid")
+        self.assertEqual(self.settings.get_gradient_preset(), "Aurora")
+        self.assertEqual(self.settings.get_gradient_style(), "linear_diag")
+        self.assertEqual(self.settings.get_gradient_colors(), ("#071A20", "#0F5257", "#1B3B6F"))
+        self.assertEqual(self.settings.get_collapsed_image_path(), "")
+        self.assertEqual(self.settings.get_expanded_image_path(), "")
+        self.assertEqual(self.settings.get_image_dim_percent(), 35)
+        self.assertEqual(self.settings.get_image_alignment(), "center")
+
+        self.settings.set_appearance_bg_mode("gradient")
+        self.settings.set_gradient_preset("Custom")
+        self.settings.set_gradient_style("conic")
+        self.settings.set_gradient_colors("112233", "", "#445566")
+        self.assertEqual(self.settings.get_appearance_bg_mode(), "gradient")
+        self.assertEqual(self.settings.get_gradient_preset(), "Custom")
+        self.assertEqual(self.settings.get_gradient_style(), "conic")
+        self.assertEqual(self.settings.get_gradient_colors(), ("#112233", "", "#445566"))
+
+        self.settings.set_appearance_bg_mode("image")
+        self.settings.set_expanded_image_path('"C:\\banners\\expanded.png"')
+        self.settings.set_collapsed_image_path("C:\\banners\\collapsed.jpg")
+        self.settings.set_image_dim_percent(120)
+        self.settings.set_image_alignment("top")
+        self.assertEqual(self.settings.get_appearance_bg_mode(), "image")
+        self.assertEqual(self.settings.get_expanded_image_path(), "C:\\banners\\expanded.png")
+        self.assertEqual(self.settings.get_collapsed_image_path(), "C:\\banners\\collapsed.jpg")
+        self.assertEqual(self.settings.get_image_dim_percent(), 85)
+        self.assertEqual(self.settings.get_image_alignment(), "top")
+
+    def test_audio_connection_prompted_flag(self) -> None:
+        """Verify audio/connection_prompted defaults to False and persists cleanly."""
+        self.assertFalse(self.settings.get_audio_connection_prompted())
+        self.settings.set_audio_connection_prompted(True)
+        self.assertTrue(self.settings.get_audio_connection_prompted())
+
 
 if __name__ == "__main__":
     unittest.main()

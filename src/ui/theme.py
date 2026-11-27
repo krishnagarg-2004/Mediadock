@@ -1,8 +1,21 @@
 import os
 import sys
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Dict, Optional, Tuple
 from PySide6.QtCore import Qt, QRectF
-from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPainterPath, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QConicalGradient,
+    QGradient,
+    QIcon,
+    QImage,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QRadialGradient,
+)
 from PySide6.QtSvg import QSvgRenderer
 
 from src.core.models import PlaybackStatus
@@ -219,8 +232,11 @@ def get_desknotch_icon_button_stylesheet() -> str:
         "  background-color: rgba(255, 255, 255, 0.18);"
         "}"
         "QPushButton:checked {"
-        "  background-color: rgba(255, 255, 255, 0.16);"
+        "  background-color: transparent;"
         "  color: #FFFFFF;"
+        "}"
+        "QPushButton:checked:hover {"
+        "  background-color: rgba(255, 255, 255, 0.10);"
         "}"
     )
 
@@ -255,3 +271,326 @@ def create_rounded_pixmap(pixmap: QPixmap, size: int, radius: float = 12.0) -> Q
     painter.drawPixmap(0, 0, scaled)
     painter.end()
     return rounded
+
+
+# --- Gradient Presets, Styles & Custom Banner Rendering ---
+
+GRADIENT_PRESETS: Dict[str, Tuple[str, str, str]] = {
+    "Aurora": ("#071A20", "#0F5257", "#1B3B6F"),
+    "Cyber Mint": ("#041410", "#0A4F3C", "#00B86B"),
+    "Midnight Neon": ("#0F0C29", "#302B63", "#24243E"),
+    "Sunset Ember": ("#230812", "#8E1D41", "#D96B27"),
+    "Royal Velvet": ("#14072E", "#441A75", "#7B2CBF"),
+    "Deep Ocean": ("#071426", "#113F7A", "#2563EB"),
+    "Rose Quartz": ("#1D0B18", "#5C1B47", "#B84A7A"),
+    "Obsidian Steel": ("#09090C", "#1B1E28", "#323748"),
+}
+
+GRADIENT_STYLES: Tuple[Tuple[str, str], ...] = (
+    ("linear_diag", "Diagonal (Top-Left → Bottom-Right)"),
+    ("linear_h", "Horizontal (Left → Right)"),
+    ("linear_v", "Vertical (Top → Bottom)"),
+    ("linear_diag_rev", "Reverse Diagonal (Bottom-Left → Top-Right)"),
+    ("radial", "Radial Glow (Center Outward)"),
+    ("conic", "Conic (Sweep Around Center)"),
+    ("mesh", "Dual-Tone Mesh Glow"),
+)
+
+IMAGE_ALIGNMENTS: Tuple[Tuple[str, str], ...] = (
+    ("center", "Center Crop"),
+    ("top", "Top Edge Focus"),
+    ("bottom", "Bottom Edge Focus"),
+)
+
+
+@dataclass(frozen=True)
+class NotchAppearance:
+    """Immutable snapshot of visual background, gradient, border, and banner settings."""
+
+    bg_mode: str = "solid"
+    bg_color: QColor = field(default_factory=lambda: QColor("#000000"))
+    border_color: QColor = field(default_factory=lambda: QColor("#000000"))
+    gradient_preset: str = "Aurora"
+    gradient_style: str = "linear_diag"
+    gradient_color_1: QColor = field(default_factory=lambda: QColor("#071A20"))
+    gradient_color_2: Optional[QColor] = field(default_factory=lambda: QColor("#0F5257"))
+    gradient_color_3: QColor = field(default_factory=lambda: QColor("#1B3B6F"))
+    collapsed_image_path: str = ""
+    expanded_image_path: str = ""
+    image_dim_percent: int = 35
+    image_alignment: str = "center"
+
+    @classmethod
+    def from_settings(cls, settings_manager) -> "NotchAppearance":
+        """Build NotchAppearance safely from SettingsManager or mock/stub objects."""
+        def _read_str(method_name: str, default: str) -> str:
+            fn = getattr(settings_manager, method_name, None)
+            if not callable(fn):
+                return default
+            val = fn()
+            return val if isinstance(val, str) else default
+
+        bg_hex = _read_str("get_notch_bg_color", "#000000")
+        border_hex = _read_str("get_notch_border_color", "#000000")
+        bg_mode = _read_str("get_appearance_bg_mode", "solid").lower()
+        if bg_mode not in ("solid", "gradient", "image"):
+            bg_mode = "solid"
+        preset = _read_str("get_gradient_preset", "Aurora")
+        style = _read_str("get_gradient_style", "linear_diag").lower()
+
+        g1, g2, g3 = ("#071A20", "#0F5257", "#1B3B6F")
+        colors_fn = getattr(settings_manager, "get_gradient_colors", None)
+        if callable(colors_fn):
+            raw_colors = colors_fn()
+            if (
+                isinstance(raw_colors, (tuple, list))
+                and len(raw_colors) == 3
+                and all(isinstance(x, str) for x in raw_colors)
+            ):
+                g1, g2, g3 = raw_colors[0], raw_colors[1], raw_colors[2]
+
+        c1 = QColor(g1) if QColor(g1).isValid() else QColor("#071A20")
+        c2 = QColor(g2) if (g2 and QColor(g2).isValid()) else None
+        c3 = QColor(g3) if QColor(g3).isValid() else QColor("#1B3B6F")
+
+        collapsed_img = _read_str("get_collapsed_image_path", "")
+        expanded_img = _read_str("get_expanded_image_path", "")
+        dim_pct = 35
+        dim_fn = getattr(settings_manager, "get_image_dim_percent", None)
+        if callable(dim_fn):
+            raw_dim = dim_fn()
+            if isinstance(raw_dim, (int, float)) and not isinstance(raw_dim, bool):
+                dim_pct = int(raw_dim)
+        align = _read_str("get_image_alignment", "center").lower()
+        if align not in ("center", "top", "bottom"):
+            align = "center"
+
+        return cls(
+            bg_mode=bg_mode,
+            bg_color=QColor(bg_hex) if QColor(bg_hex).isValid() else QColor("#000000"),
+            border_color=QColor(border_hex) if QColor(border_hex).isValid() else QColor("#000000"),
+            gradient_preset=preset,
+            gradient_style=style,
+            gradient_color_1=c1,
+            gradient_color_2=c2,
+            gradient_color_3=c3,
+            collapsed_image_path=collapsed_img,
+            expanded_image_path=expanded_img,
+            image_dim_percent=max(0, min(85, dim_pct)),
+            image_alignment=align,
+        )
+
+
+_RAW_BANNER_CACHE: Dict[Tuple[str, int], QPixmap] = {}
+_SCALED_BANNER_CACHE: Dict[Tuple[str, int, int, int, str], QPixmap] = {}
+_MAX_BANNER_CACHE_ENTRIES = 24
+
+
+def invalidate_banner_cache() -> None:
+    """Clear cached custom banner QPixmaps."""
+    _RAW_BANNER_CACHE.clear()
+    _SCALED_BANNER_CACHE.clear()
+
+
+def get_scaled_banner_pixmap(
+    image_path: str,
+    width: int,
+    height: int,
+    alignment: str = "center",
+) -> Optional[QPixmap]:
+    """Load, cover-scale, and crop a banner image for the target widget size, using an in-memory cache."""
+    if not image_path or width <= 0 or height <= 0:
+        return None
+
+    try:
+        mtime_ns = os.stat(image_path).st_mtime_ns
+    except OSError:
+        return None
+
+    scaled_key = (image_path, mtime_ns, width, height, alignment)
+    cached_scaled = _SCALED_BANNER_CACHE.get(scaled_key)
+    if cached_scaled is not None:
+        return cached_scaled
+
+    raw_key = (image_path, mtime_ns)
+    raw_pix = _RAW_BANNER_CACHE.get(raw_key)
+    if raw_pix is None:
+        loaded = QPixmap(image_path)
+        if loaded.isNull():
+            return None
+        if len(_RAW_BANNER_CACHE) >= _MAX_BANNER_CACHE_ENTRIES:
+            _RAW_BANNER_CACHE.clear()
+        _RAW_BANNER_CACHE[raw_key] = loaded
+        raw_pix = loaded
+
+    scaled = raw_pix.scaled(
+        width,
+        height,
+        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    x_off = max(0, (scaled.width() - width) // 2)
+    extra_h = max(0, scaled.height() - height)
+    if alignment == "top":
+        y_off = 0
+    elif alignment == "bottom":
+        y_off = extra_h
+    else:
+        y_off = extra_h // 2
+
+    cropped = scaled.copy(x_off, y_off, width, height)
+    if len(_SCALED_BANNER_CACHE) >= _MAX_BANNER_CACHE_ENTRIES:
+        _SCALED_BANNER_CACHE.clear()
+    _SCALED_BANNER_CACHE[scaled_key] = cropped
+    return cropped
+
+
+def build_notch_gradient(
+    rect: QRectF,
+    style: str,
+    color_1: QColor,
+    color_2: Optional[QColor],
+    color_3: QColor,
+) -> QGradient:
+    """Create configured QGradient (linear directions, radial, conic sweep, or mesh base) over rect."""
+    c1 = color_1 if color_1.isValid() else COLOR_BG_ISLAND
+    c3 = color_3 if color_3.isValid() else c1
+    c2 = color_2 if (color_2 is not None and color_2.isValid()) else None
+
+    if style == "linear_h":
+        grad: QGradient = QLinearGradient(rect.left(), rect.center().y(), rect.right(), rect.center().y())
+    elif style == "linear_v":
+        grad = QLinearGradient(rect.center().x(), rect.top(), rect.center().x(), rect.bottom())
+    elif style == "linear_diag_rev":
+        grad = QLinearGradient(rect.bottomLeft(), rect.topRight())
+    elif style == "radial":
+        grad = QRadialGradient(rect.center(), max(rect.width(), rect.height()) * 0.65)
+    elif style == "conic":
+        grad = QConicalGradient(rect.center(), 45.0)
+        if c2 is not None:
+            grad.setColorAt(0.0, c1)
+            grad.setColorAt(0.35, c2)
+            grad.setColorAt(0.70, c3)
+            grad.setColorAt(1.0, c1)
+        else:
+            grad.setColorAt(0.0, c1)
+            grad.setColorAt(0.5, c3)
+            grad.setColorAt(1.0, c1)
+        return grad
+    else:
+        # "linear_diag" or base layer of "mesh"
+        grad = QLinearGradient(rect.topLeft(), rect.bottomRight())
+
+    if c2 is not None:
+        grad.setColorAt(0.0, c1)
+        grad.setColorAt(0.5, c2)
+        grad.setColorAt(1.0, c3)
+    else:
+        grad.setColorAt(0.0, c1)
+        grad.setColorAt(1.0, c3)
+    return grad
+
+
+def paint_notch_surface(
+    painter: QPainter,
+    rect: QRectF,
+    path: QPainterPath,
+    inner_path: QPainterPath,
+    appearance: NotchAppearance,
+    is_expanded: bool = False,
+    ambient_accent: Optional[QColor] = None,
+) -> None:
+    """Render solid/gradient/custom-banner shell fill, sheen, ambient glow, and crisp border stroke."""
+    # 1. Base solid fill (guarantees opaque substrate and seamless fallback)
+    painter.fillPath(path, appearance.bg_color)
+
+    has_rendered_banner = False
+    if appearance.bg_mode == "gradient":
+        grad = build_notch_gradient(
+            rect,
+            appearance.gradient_style,
+            appearance.gradient_color_1,
+            appearance.gradient_color_2,
+            appearance.gradient_color_3,
+        )
+        painter.fillPath(path, grad)
+        if appearance.gradient_style == "mesh":
+            painter.save()
+            painter.setClipPath(path)
+            accent_stop = appearance.gradient_color_2 or appearance.gradient_color_3
+            blob_a = QColor(accent_stop)
+            blob_a.setAlpha(175)
+            blob_b = QColor(accent_stop)
+            blob_b.setAlpha(0)
+            blob_center_x = rect.left() + rect.width() * 0.78
+            blob_center_y = rect.top() + rect.height() * 0.25
+            mesh_glow = QRadialGradient(blob_center_x, blob_center_y, max(rect.width(), rect.height()) * 0.55)
+            mesh_glow.setColorAt(0.0, blob_a)
+            mesh_glow.setColorAt(1.0, blob_b)
+            painter.fillRect(rect, mesh_glow)
+            painter.restore()
+
+    elif appearance.bg_mode == "image":
+        banner_path = appearance.expanded_image_path if is_expanded else appearance.collapsed_image_path
+        aligned_rect = rect.toAlignedRect()
+        target_w = max(1, aligned_rect.width())
+        target_h = max(1, aligned_rect.height())
+        banner_pix = get_scaled_banner_pixmap(
+            banner_path,
+            target_w,
+            target_h,
+            alignment=appearance.image_alignment,
+        )
+        if banner_pix is not None and not banner_pix.isNull():
+            has_rendered_banner = True
+            painter.save()
+            painter.setClipPath(path)
+            painter.drawPixmap(aligned_rect, banner_pix)
+            if appearance.image_dim_percent > 0:
+                scrim_alpha = int(round(255.0 * min(85, appearance.image_dim_percent) / 100.0))
+                painter.fillRect(rect, QColor(0, 0, 0, scrim_alpha))
+            painter.restore()
+
+    # 2. Translucent frost top sheen
+    sheen = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
+    if has_rendered_banner:
+        sheen.setColorAt(0.0, QColor(255, 255, 255, 10))
+        sheen.setColorAt(0.5, QColor(255, 255, 255, 3))
+        sheen.setColorAt(1.0, QColor(255, 255, 255, 0))
+    else:
+        sheen.setColorAt(0.0, QColor(255, 255, 255, 14))
+        sheen.setColorAt(0.45, QColor(255, 255, 255, 5))
+        sheen.setColorAt(1.0, QColor(255, 255, 255, 2))
+    painter.fillPath(path, sheen)
+
+    # 3. Radial cover glow anchored behind left artwork (when expanded)
+    if is_expanded and ambient_accent is not None and ambient_accent.isValid():
+        painter.save()
+        painter.setClipPath(path)
+        glow_cx = rect.left() + 68.0
+        glow_cy = rect.top() + 72.0
+        glow_grad = QRadialGradient(glow_cx, glow_cy, float(rect.width() * 0.65))
+        c1 = QColor(ambient_accent)
+        c2 = QColor(ambient_accent)
+        if has_rendered_banner or appearance.bg_mode == "gradient":
+            c1.setAlpha(38)
+            c2.setAlpha(8)
+        else:
+            c1.setAlpha(74)
+            c2.setAlpha(18)
+        glow_grad.setColorAt(0.0, c1)
+        glow_grad.setColorAt(0.55, c2)
+        glow_grad.setColorAt(1.0, QColor(0, 0, 0, 0))
+        painter.fillRect(rect, glow_grad)
+        painter.restore()
+
+    # 4. Crisp inner light-catch + outer border
+    if appearance.border_color == COLOR_BORDER_ISLAND:
+        painter.setPen(QPen(QColor(255, 255, 255, 22), 1.0))
+        painter.drawPath(inner_path)
+        pen_width = 1.0
+    else:
+        pen_width = 1.5
+
+    painter.setPen(QPen(appearance.border_color, pen_width))
+    painter.drawPath(path)

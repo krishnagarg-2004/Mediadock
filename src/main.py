@@ -20,7 +20,7 @@ from src.media.gsmtc_provider import GSMTCProvider
 from src.core.media_core import MediaCore
 from src.ui.main_window import MainWindow
 from src.ui.system_tray import SystemTrayIcon
-from src.ui.settings_dialog import SettingsDialog
+from src.ui.settings_dialog import SettingsDialog, prompt_and_connect_system_audio
 from src.ui.hotkeys import GlobalHotkeyManager
 
 
@@ -157,6 +157,25 @@ def main() -> int:
     else:
         window.set_state(DynamicIslandState.COLLAPSED)
         tray_icon.update_menu_state(True)
+
+    # One-time interactive permission check to connect Equalizer APO & PC audio booster
+    def _maybe_prompt_audio_connection() -> None:
+        try:
+            apo_status = media_core.apo_manager.get_connection_status()
+            if (
+                not start_hidden
+                and not settings_manager.get_audio_connection_prompted()
+                and not apo_status.get("connected")
+            ):
+                prompt_and_connect_system_audio(
+                    settings_manager=settings_manager,
+                    media_core=media_core,
+                    parent=window if window.isVisible() else None,
+                )
+        except Exception:
+            pass
+
+    QTimer.singleShot(1400, _maybe_prompt_audio_connection)
 
     return app.exec()
 

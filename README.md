@@ -1,249 +1,164 @@
 # MediaDock
 
-**MediaDock** is a native Windows desktop media application built with **Python 3.14**, **PySide6 (Qt for Python)**, and **PyWinRT**. It automatically detects and controls system-wide media playback (Spotify, YouTube, VLC, Apple Music, Chrome/Edge) using the Windows **Global System Media Transport Controls (GSMTC)** API and presents a top-center **Dynamic Island** overlay.
+**MediaDock** is a native Windows 10 / 11 desktop media overlay inspired by Dynamic Island / DeskNotch. Built with **Python 3.14**, **PySide6**, and **WinRT (GSMTC)**, it detects active media across apps like **Spotify**, **YouTube (Chrome / Edge / Brave / Firefox)**, **VLC**, and **Apple Music**, showing a sleek top-center notch that expands into an interactive frosted media card.
 
 ---
 
-## 1. Product Definition & Core Identity
+## Key Features
 
-- **Executable Name**: `MediaDock.exe`
-- **Platform**: Windows 10 / 11 (64-bit)
-- **Target Audience**: Windows desktop users desiring non-intrusive, ambient, universal media controls.
-
-MediaDock runs as a lightweight, background desktop utility that monitors system-wide audio and media playback in real-time. It stays silently hidden when no media is active and automatically presents a sleek DeskNotch-styled top-center notch bar when media playback is detected. When triggered, the notch expands downward into an interactive frosted media card allowing users to view metadata (track title, artist, album art, live synchronized lyrics) and issue media commands (play/pause, skip, shuffle, repeat, interactive scrub seek, volume adjustment, mute) without disrupting desktop workflows.
-
-### Universal Scope
-MediaDock integrates with any media application exposing the Windows GSMTC API:
-- **Spotify** (primary visual design target)
-- **Web Browsers** (Google Chrome, Microsoft Edge, Firefox, Brave — YouTube, SoundCloud, web audio)
-- **VLC Media Player**
-- **Apple Music**
-- Other GSMTC-compliant desktop and web media players
+- **Universal Windows Media Control**: Works automatically with any player that supports Windows Global System Media Transport Controls (GSMTC), with quick switching when multiple media apps are open.
+- **Hybrid Top-Center Design**:
+  - **Collapsed Notch (`220 × 34` px)**: Sits flush against the top edge of your screen (`y = 0`) with curved bezel ears, rounded mini artwork or app icon, track title, 3-bar audio pulse, and 12-hour clock.
+  - **Expanded Oval Card (`410 × 178` px)**: Smoothly drops into a floating rounded card (`y = 12`) with album artwork, ambient color glow, playback controls (Previous, Play/Pause, Next, Shuffle, Repeat), interactive progress scrub bar, Pin lock, and live **Synchronized Lyrics** (`410 × 216` px).
+- **Real-Time Audio Visualizer**: Captures live desktop audio output using Windows WASAPI loopback and renders a mirrored waveform in either **True FFT Frequency Spectrum** or **RMS Energy** mode.
+- **System Equalizer Bridge (via Equalizer APO)**: Includes a `+12 dB` preamp boost, bass/clarity/treble tone sliders, noise gate, and 5-band graphic EQ presets *(see [How Audio Connects to Your PC](#how-audio-settings-connect-to-your-pc))*.
+- **Rich Appearance Customization**: Choose **Solid Hex Colors (`#RRGGBB`)**, **8 Gradient Presets or Custom 2/3-Stop Gradients** across **7 Styles**, or **Custom Banner Images** set separately for the **Collapsed Notch** and **Expanded Card** with live previews.
+- **Frosted Gaussian-Blur Settings UI**: Native Windows 11 DWM Acrylic blur dialog (with Windows 10 fallback) organized into 6 clean scrollable sections.
+- **Desktop Integration**: System tray controls, global OS hotkeys (`Ctrl+Alt+S` and `Ctrl+Alt+Space`), fullscreen game/video auto-hide, multi-monitor anchoring, single-instance protection, and Windows startup integration.
 
 ---
 
-## 2. Product Vision & Visual Design Language
+## How the Overlay Works
 
-- **Visual Identity & Hex Customization**: Obsidian Black (`#000000`) default shell and border, dark charcoal (`#141414` – `#222222`) secondary surfaces, subtle dark gray (`#2A2A2A`) borders, white (`#FFFFFF`) primary text, and muted gray (`#8A8A8A`) secondary text. Users can customize the Dynamic Island **Background** and **Border** colors directly using 6-digit hex color codes (`#RRGGBB`) in Settings -> Appearance (with activity status colors removed).
-- **Silent Background Operation**: Starts with Windows (or on demand) cleanly in the background via `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, automatically reconciling startup entries and listening for media sessions without requiring user intervention.
-
----
-
-## 3. Top-Center Notch & Expanded Oval Architecture
-
-MediaDock presents a hybrid top-center overlay: a **flush top-bezel Notch** (`y = 0` with `8px` concave flared ears) when collapsed, morphing cleanly into a floating **Oval Expanded Card** (`y = 12` with `32px` rounded corners) on hover or click.
-
-```
-                    ┌──────────────┐
-                    │    HIDDEN    │  (No Active Media / Disabled in Settings)
-                    └──────┬───────┘
-                           │
-                     Media detected
-                           │
-                           ▼
-              ┌──────────────────────────────┐  (Flush bezel notch y = 0, 8px flared ears)
-              │       COLLAPSED NOTCH        │  (220x34 px, 14px bottom radius)
-              │ [Art] Title       ▌▌▌ 12:45  │  (Album thumb, pulse, 12h clock)
-              └──────────────┬───────────────┘
-                             │
-                   Hover / Click Trigger
-                             │
-                             ▼
-              ╭──────────────────────────────╮  (Floating at y = 12, 32px oval corners)
-              │       EXPANDED OVAL          │  (Frosted Glass Card 410x178 px / 410x216 w/ lyrics)
-              │  [92px Art] Meta / ⚪ Play   │  (Ambient radial cover glow + Pin/Settings dock)
-              ╰──────────────┬───────────────╯
-                             │
-                   Mouse leaves (unless Pinned)
-                             │
-                    Collapse Delay (ms)
-                             │
-                             ▼
-              ┌──────────────────────────────┐
-              │       COLLAPSED NOTCH        │
-              └──────────────────────────────┘
+```text
+  No media active ──► HIDDEN (runs quietly in System Tray)
+         │
+   Media starts
+         ▼
+  ┌──────────────────────────┐
+  │ 🎵 Song Title    ▌▌▌ 9:41 │  ◄── COLLAPSED NOTCH (flush at top edge y = 0)
+  └────────────┬─────────────┘
+         Hover or Click
+               ▼
+  ╭──────────────────────────╮
+  │  ┌────┐  SPOTIFY  ▶ / ⏸  │
+  │  │Art │  Song & Artist   │  ◄── EXPANDED OVAL CARD (floating at y = 12)
+  │  └────┘  ⏮ ⚪ ⏭  🔀 🔁    │
+  │   ♪ Synced Lyrics Strip   │
+  │  01:12 ━━●━━━━━━━ 03:40  │
+  ╰──────────────────────────╯
 ```
 
-- **Hybrid Notch-to-Oval Morphing**: Flush top-bezel collapsed notch (`220x34`, `14px` bottom radius, `8px` top flared ears at `y = 0`) morphing cleanly via 180ms `OutCubic` animation into the `32px`-radius floating oval expanded card (`410x178` at `y = 12`, expanding cleanly to `410x216` when synchronized lyrics display) around a constant center X coordinate with zero position drift.
-- **Hover Expansion & Inactivity Collapse**: Mouse hover on the notch immediately triggers downward expansion; mouse leave starts a configurable single-shot timer (default `3500ms`, adjustable 500–30000ms in settings) before auto-collapsing.
-- **Notch Source Classification**: Dynamically identifies the active source app and renders crisp vector icons (`spotify.svg`, `youtube.svg`, `vlc.svg`, or `default_media.svg`) alongside elided track metadata.
+- **Auto-Hide & Auto-Collapse**: Stays invisible when nothing is playing, expands on hover or click, and collapses after a configurable delay (`500 ms` – `30,000 ms`) once the pointer moves away (unless pinned with the lock icon).
 
 ---
 
-## 4. Key Systems & Architecture
+## How Audio Settings Connect to Your PC
 
-### 4.1 Media Engine & GSMTC Integration (`src/media/`, `src/core/`)
-- **`MediaCore`**: Thread-safe Qt facade coordinating playback status, track metadata, audio analysis, and volume changes.
-- **`GSMTCProvider`**: WinRT async listener enumerating system media sessions, extracting album art thumbnails, and auto-falling back across sessions.
-- **`WindowsVolumeProvider`**: Direct Windows CoreAudio (`IAudioEndpointVolume` via ctypes COM) master volume and mute control with graceful degradation when audio endpoints are unavailable.
+MediaDock connects its audio controls and settings to Windows across three layers:
 
-### 4.2 WASAPI Loopback Capture, Audio Equalizer & Real-Time Visualizer
-- **`WASAPILoopbackCapture`**: Native COM loopback audio capture stream reading real PCM audio frames from the default Windows render endpoint.
-- **`EqualizerAPOManager`**: Windows system-wide parametric equalizer and volume boost bridge (`mediadock_eq.txt` synchronizer) providing:
-  - **Audio Boost (Preamp)**: Up to `+12.0 dB` volume boost beyond standard 100% Windows ceiling.
-  - **Quick Tone Controls**: Bass low-shelf (`-12 dB` to `+12 dB`), Vocal Clarity peaking, Treble/Air high-shelf, and Noise Gate threshold (`0%` to `50%`).
-  - **5-Band Graphic Equalizer**: Precision sliders for `60 Hz`, `250 Hz`, `1 kHz`, `4 kHz`, `16 kHz` with 6 factory presets (*Flat*, *Bass Boost*, *Vocal Clarity*, *Electronic*, *Rock*, *Acoustic*) and Flat reset.
-- **Dynamic Visualizer Coupling**: `AudioAnalyzer` dynamically couples the active EQ and boost settings to the visualizer bars — boosting bass directly makes the bass bars bounce higher, increasing preamp boost scales overall visual sensitivity, and the noise gate silences low-level background hiss.
-- **`ReactiveVisualizerWidget`**: Anti-aliased rounded waveform bars reacting strictly to system audio output, resting at a clean static baseline during silence or pause (zero artificial movement).
+| Audio Feature | Connected to Your PC? | How It Works on Any Computer |
+| :--- | :--- | :--- |
+| **Card Master Volume Slider & Mute (`CoreAudio`)** | **Yes (Connected Out-of-the-Box)** | Directly reads and controls your Windows default playback endpoint (`IAudioEndpointVolume`), syncing automatically with external Windows volume/mute changes and device switches (headphones, speakers, Bluetooth). |
+| **Playback, Shuffle, Repeat & Scrub Bar (`GSMTC`)** | **Yes (Connected Out-of-the-Box)** | Controls system media sessions directly via WinRT GSMTC (`winrt-Windows.Media` + `winrt-Windows.Media.Control`) with active Shuffle & Repeat state highlighting. |
+| **Live Visualizer (`WASAPI Loopback`)** | **Yes (Real-Time Audio Capture)** | Listens directly to your default Windows audio playback so the waveform bars bounce in real time to music, videos, or games. |
+| **System Equalizer & `+12 dB` Audio Booster** | **Permission-Prompted Live Setup** | Always updates MediaDock's **visualizer bars** immediately (**Noise Gate** filters the visualizer). To adjust **real speaker/headphone sound** (Preamp `+12 dB`, Bass, Clarity, Treble, 5-Band EQ), MediaDock asks permission on first launch (or via **Settings → Audio & Equalizer**) to download/install [**Equalizer APO**](https://equalizerapo.com/download.html), grant Windows UAC write access to `mediadock_eq.txt`, and open the Audio Device Selector so you can attach it to your playback device. |
 
-### 4.3 Win32 Global Shortcuts & Recorder
-- **OS-Wide Hotkey Dispatch**: Registered directly with the window HWND via Win32 `RegisterHotKey`:
-  - **Show / Hide MediaDock**: `Ctrl+Alt+S`
-  - **Toggle Play / Pause**: `Ctrl+Alt+Space`
-- **Native Event Filtering**: `HotkeyNativeEventFilter` intercepts `WM_HOTKEY` (0x0312) messages safely handling PySide6 Shiboken `VoidPtr` objects.
-- **Interactive Shortcut Recorder**: `ShortcutRecorderWidget` in settings captures keyboard input directly with strict 2-key and 3-key rules, duplicate assignment detection, and automatic rollback if OS registration fails.
-
-### 4.4 Spacious Frosted Gaussian-Blur Preferences UI & Persistence
-- **Modern Gaussian Blur Card Dialog**: `820x600` px resizable frosted glass window (`780x560` minimum, Windows 11 DWM Acrylic Gaussian Blur with Windows 10 `SetWindowCompositionAttribute` fallback and translucent glass cards) with a `185px` left navigation sidebar and 6 scrollable, card-grouped stacked pages:
-  1. **Preferences**: Grouped into Startup & System Tray, Window & Display, and Media Experience cards (Start with Windows, Start Minimized, Close to Tray, Always on Top, Enable Dynamic Island, Fullscreen Auto-Hide, Target Display Monitor selector, Live Synchronized Lyrics).
-  2. **Global Shortcuts**: Interactive shortcut recorders for Show/Hide and Play/Pause plus shortcut guidelines.
-  3. **Dynamic Island**: Expansion Trigger (*Hover to Expand* vs *Click to Expand*), Hover Intent Delay (`0–1000 ms`), and Collapse Delay via `CollapseDelaySpinBox` (`500–30000 ms`).
-  4. **Appearance**: Custom hex color code (`#RRGGBB`) inputs with live swatches, Reset Default (`#000000`), and live notch preview for Background and Border colors.
-  5. **Audio**: Equalizer APO status, Visualizer Spectrum Mode (*True FFT Frequency Spectrum* vs *Time-Domain RMS Energy*), Audio Boost (Preamp), tone controls (bass, clarity, treble, noise gate), and 5-band graphic equalizer with presets.
-  6. **About**: Version badge, feature overview, clickable GitHub repository & issue links (`https://github.com/krishnagarg-2004/Mediadock`), and runtime/shortcut quick reference.
-- **`SettingsManager`**: Backed by Qt `QSettings` store with explicit synchronization on save and system tray exit, plus startup `AutostartManager.reconcile()` verification.
-- **Single-Instance Protection**: Enforced via `SingleInstanceGuard` local socket IPC, ensuring only one instance runs and restoring the existing window on secondary launches.
+> **Tip**: Check **Settings → Audio & Equalizer** anytime to view your live CoreAudio volume connection and Equalizer APO status, click **Allow & Connect Audio...** / **Grant Permission & Connect**, or open **Audio Devices...** to pick which speakers/headphones are boosted.
 
 ---
 
-## 5. Development & Testing
+## Settings & Customization Overview
+
+Open **Preferences** from the gear icon (`⚙`) on the expanded card or by right-clicking the System Tray icon:
+
+1. **Preferences**: *Start with Windows*, *Start Minimized*, *Close to Tray*, *Always on Top*, *Enable Dynamic Island*, *Auto-Hide in Fullscreen Games & Apps*, *Target Display Monitor*, and *Live Synchronized Lyrics*.
+2. **Global Shortcuts**: Record custom 2-key or 3-key Windows shortcuts (defaults: `Ctrl+Alt+S` to Show/Hide, `Ctrl+Alt+Space` for Play/Pause).
+3. **Dynamic Island**: Pick *Hover* or *Click* to expand, *Hover Intent Delay* (`0–1000 ms`), and *Collapse Delay* (`500–30000 ms`).
+4. **Appearance**:
+   - **Background Style**: *Solid Color* (`#RRGGBB` hex), *Gradient*, or *Custom Banner Image*.
+   - **Border Color**: Custom `#RRGGBB` outline for both collapsed and expanded shapes.
+   - **Gradient Options**: 8 presets (*Aurora*, *Cyber Mint*, *Midnight Neon*, *Sunset Ember*, *Royal Velvet*, *Deep Ocean*, *Rose Quartz*, *Obsidian Steel*) or *Custom* 2/3-stop hex colors, across **7 styles** (*Diagonal*, *Horizontal*, *Vertical*, *Reverse Diagonal*, *Radial*, *Conic Sweep*, *Dual-Tone Mesh*).
+   - **Custom Image Banners**: Pick separate `PNG`/`JPG`/`WEBP`/`BMP` images for the **Expanded Card Banner** and **Collapsed Notch Banner** (or copy expanded to collapsed with one click), set *Center/Top/Bottom* crop focus, adjust **Banner Overlay Dim** (`0–85%`), and preview both versions live.
+5. **Audio & Equalizer**: Live CoreAudio Master Volume & Equalizer APO connection status, **Allow & Connect Audio...** permission installer/UAC setup, **Audio Devices...** selector, *Apply Audio Now*, *True FFT* vs *RMS* visualizer mode, `+12 dB` Preamp, Bass/Clarity/Treble sliders, Noise Gate, and 5-band Graphic EQ (`60 Hz` – `16 kHz`) with presets.
+6. **About**: App info, shortcut summary, clickable GitHub links, and support contact (`krishna.garg.support@gmail.com` for suggestions, feedback, questions, or issues).
+
+---
+
+## Quick Start (Run From Source)
 
 ### Prerequisites
-- Windows 10 or Windows 11
-- Python 3.10+ (Python 3.14 recommended)
+- **Windows 10 or Windows 11** (64-bit)
+- **Python 3.10+** (Python 3.14 recommended)
 
-### Setup Virtual Environment
+### Setup & Launch
 ```cmd
+git clone https://github.com/krishnagarg-2004/Mediadock.git
+cd Mediadock
+
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-```
 
-### Run Application from Source
-```cmd
 python -m src.main
 ```
 
-### Run Automated Test Suite
-MediaDock includes a comprehensive unit and integration test suite (305 tests covering core models, state machine, notch/oval UI chassis, audio analysis, hotkeys, Equalizer APO, lyrics, hex appearance customization, Gaussian-blur Settings UI, startup reconciliation, and widget lifecycle):
-```cmd
-.venv\Scripts\python.exe -m unittest discover -s tests
-```
-
-### Check Whitespace & Formatting
-```cmd
-git diff --check
-```
-
-### Build Standalone Executable
-PyInstaller compiles MediaDock into a single standalone executable with all assets bundled:
-```cmd
-.venv\Scripts\python.exe scripts/build.py
-```
-Output artifact: `dist/MediaDock.exe`.
-
----
-
-## 6. Implementation Status & Milestones
-
-### Completed Milestones Summary
-- **Milestone 1 — Foundation (COMPLETE)**: `FramelessWindow`, `MainWindow`, PySide6 entry point.
-- **Milestone 2 — Windows Media Detection (COMPLETE)**: `BaseMediaProvider`, `GSMTCProvider`, `MediaCore`, PyWinRT session listening, metadata extraction.
-- **Milestone 3 — Connected UI & Advanced Controls (COMPLETE)**: Transport control abstraction, GSMTC async dispatches, `MediaCore` routing, interactive controls, seeking state machine.
-- **Milestone 4 — Visual Polish & Dynamic Styling (COMPLETE)**: Product design tokens, QSS styling, `ElidedLabel`, status badges, opacity animations, album-art color extraction.
-- **Milestone 5 — System Tray & Settings (COMPLETE)**: `SettingsManager`, `SystemTrayIcon`, `SettingsDialog`, lifecycle integration.
-- **Milestone 6 — Advanced Features, OS Integration & Packaging (COMPLETE)**: Windows Autostart (`AutostartManager`), Global Hotkeys (`GlobalHotkeyManager`), PyInstaller spec (`MediaDock.spec`), documentation suite (`docs/architecture.md`, `docs/user_guide.md`).
-- **Milestone 7 — Media Source & Control Expansion (COMPLETE)**: GSMTC multi-session selection (`MediaSessionInfo`), master volume & mute control (`WindowsVolumeProvider`, CoreAudio `IAudioEndpointVolume` COM integration), configurable global hotkeys.
-- **Phase 8 — Reliability, Single-Instance Guard & Desktop Lifecycle (COMPLETE)**: Single-instance application lock (`SingleInstanceGuard`), process/window lifecycle decoupling, clean system tray exit, autostart verification (**155 / 155 tests passing**).
-- **Phase 9.1 — Dynamic Island Foundation (COMPLETE)**: Symmetrical geometry morphing, `OutCubic` animations, state machine (**182 / 182 tests passing**).
-- **Phase 9.2 — V1 Core Refinements & Launch Bugfix (COMPLETE)**: Resolved launch bug, Win32 hotkeys, fixed visual identity, landscape settings.
-- **Phase 9.2.4A — WASAPI Loopback Capture Layer (COMPLETE)**: Native Windows loopback capture (`WASAPILoopbackCapture` / `AudioFrame`) (**213 / 213 tests passing**).
-- **Phase 9.2.4B — Audio Analysis Engine (COMPLETE)**: Time-domain sub-window RMS energy engine (`AudioAnalyzer`), multi-channel downmixing, attack/decay smoothing, normalized bar heights `0.0`–`1.0` (**241 / 241 tests passing**).
-- **Phase 9.2.4C — Audio Visualizer UI Integration & WASAPI Wiring (COMPLETE)**: End-to-end real-audio visualizer pipeline (`WASAPILoopbackCapture` -> `AudioAnalyzer` -> `MediaCore` -> `MainWindow` -> `ReactiveVisualizerWidget`), strictly real audio with zero artificial movement (**246 / 246 tests passing**).
-- **Bug Fix & Polish Milestone (COMPLETE)**: Resolved Preference Persistence Regression, Collapse Delay Control UI (`CollapseDelaySpinBox`), Notch Metadata Center Alignment, and Geometry Lifecycle Initial Launch Centering (**256 / 256 tests passing**).
-- **V1 Final Core Issues Fix Milestone (COMPLETE)**: Resolved Preferences Persistence on System Tray Exit, Collapsed Metadata Vertical Alignment Post-Collapse, and Collapsed to Expanded Animation Direction (**258 / 258 tests passing**).
-- **Documentation Consolidation Milestone (COMPLETE)**: Filtered noise, merged `PROJECT_BIBLE.md` and `README.md` into a single authoritative `README.md`, updated `AI_RULES.md`, and eliminated redundant specification documents (**258 / 258 tests passing**).
-- **Audio Boost & Equalizer Milestone (COMPLETE)**: Implemented `EqualizerAPOManager`, Preamp Volume Boost (up to +12 dB), Bass low-shelf, Vocal Clarity peaking, Treble high-shelf, Noise Gate threshold, 5-band Graphic Equalizer with presets (Flat, Bass Boost, Vocal Clarity, Electronic, Rock, Acoustic, Custom), and dynamic coupling to `AudioAnalyzer` for real-time visualizer bar reactions (**275 / 275 tests passing**).
-- **Notch Screen Conversion Milestone (COMPLETE)**: Converted floating capsule into flush top-center **Notch Screen** (`y = 0`, flat top against screen bezel, smooth rounded bottom corners), updated `CollapsedNotchWidget`, `FramelessWindow`, and `MainWindow` geometry lifecycle (**275 / 275 tests passing**).
-- **V1.5 Visual, Audio & Desktop Superpowers Milestone (COMPLETE)**: Implemented all 11 core upgrades in one go:
-  1. *Dynamic Album Art Color Glow*: Radial ambient glow and accent tinting from track artwork.
-  2. *Interactive Progress Scrubbing*: `InteractiveScrubSlider` with proportional click-to-seek, smooth scrubbing, and live timestamp tooltip.
-  3. *Mirrored Waveform Visualizer*: Symmetrical vertical bar expansion around center baseline with rounded pill caps.
-  4. *Click vs. Hover Trigger Mode*: Configurable expansion trigger with intent delay deadzone timer.
-  5. *Shuffle & Repeat Playback Toggles*: WinRT GSMTC controls with dedicated SVG vector icons.
-  6. *Fullscreen Game & App Auto-Hide*: Native Win32 foreground window detection suppressing overlay in games/movies.
-  7. *Multi-Monitor Display Selector*: Configurable monitor target anchoring across multi-screen setups.
-  8. *True FFT Audio Spectrum*: Pure Python Radix-2 FFT logarithmic spectrum analysis (30Hz–16000Hz).
-  9. *Per-App Volume Mixing*: Application-targeted volume adjustment with master volume fallback.
-  10. *Multi-Session Media Switcher Pill*: Dynamic session switcher dropdown in expanded card.
-  11. *Live Synchronized Lyrics Preview*: Async LRCLIB lyrics client and live timeline-synced lyric line.
-  (**286 / 286 tests passing**).
-- **DeskNotch UI & Visibility Stability Milestone (COMPLETE)**: Transformed MediaDock's UI to match DeskNotch's obsidian glass aesthetic (`220x34` slim bar $\leftrightarrow$ `380x174` expanded notch with `8px`/`10px` top concave flared bezel ears, `14px`/`26px` bottom corner radii, left-centered radial cover glow, frosted media tile with `92x92` rounded `12px` artwork, uppercase player badge + 3-bar pulse + 12h clock, signature solid white circular Play/Pause disc with black glyph, and integrated Pin/Lock + Settings dock buttons), fixed Win32 DPI-aware fullscreen detection (`IsZoomed` / `WS_CAPTION` exclusion + `GetMonitorInfoW`), added `HWND_TOPMOST` Z-order promotion, and isolated test settings (**295 / 295 tests passing**).
-- **Startup Reliability, Frosted Gaussian-Blur Settings UI & Hex Appearance Milestone (COMPLETE)**: Fixed Windows startup registration (`AutostartManager.reconcile`, `src/main.py` root `sys.path`/CWD normalization, delayed tray visibility retries for Explorer boot timing, and QSettings/winreg isolation across tests), overhauled `SettingsDialog` into a resizable frosted Gaussian-blur glass workspace (`820x600`, `780x560` minimum, Win11 DWM Acrylic backdrop + Win10 fallback, translucent glass cards), added hex-code (`#RRGGBB`) customization for notch Background & Border with live preview (status colors removed), removed collapsed status dot, placed full-width synchronized lyrics cleanly outside `#MediaTile` so transport buttons remain aligned inside the card, restored flush top-bezel collapsed notch (`y = 0`, `14px` bottom radius, `8px` ears) while preserving the floating oval expanded card (`32px` radius at `y = 12`), and enriched About with clickable GitHub repository links (**305 / 305 tests passing**).
-- **Repository Hygiene & Dead-File Cleanup Milestone (COMPLETE)**: Removed unused tracked and workspace files (`MEDIA_DOCK_DEVELOPMENT_HANDOFF.txt` obsolete Phase 9.2 snapshot, empty `0`-byte `LICENSE.txt`, unreferenced `assets/icons/repeat_one.svg` icon, duplicate empty `venv/`, and legacy `scratch/` diagnostic scripts) so `unittest`, bare `pytest`, and PyInstaller builds stay clean (**305 / 305 tests passing**).
-
-### Implemented Codebase vs Target Specification Matrix
-
-| Feature / Component | Current Implementation Codebase | Target V1 Specification Status |
-| :--- | :--- | :--- |
-| **Application Launch Stability** | Verified (`python -m src.main` and `dist/MediaDock.exe` launch with 0 errors) | Complete |
-| **Hybrid Notch & Oval Chassis** | Implemented (Flush `y = 0` collapsed notch `220x34` with `8px` ears & `14px` bottom radius; floating `y = 12` oval expanded card `410x178` / `410x216` with `32px` corners) | Complete |
-| **DeskNotch Media Tile & Controls**| Implemented (`#MediaTile` card with solid white `#FFFFFF` Play/Pause disc, rounded `92x92` art, Pin/Lock & Settings dock, and full-width bottom lyrics strip) | Complete |
-| **Dynamic Album Art Glow** | Implemented (Ambient radial cover glow centered behind artwork, tinted visualizer and sliders) | Complete |
-| **Interactive Progress Scrubbing** | Implemented (`InteractiveScrubSlider` click-to-seek, smooth drag, live timestamp tooltip) | Complete |
-| **Mirrored Waveform Visualizer** | Implemented (`ReactiveVisualizerWidget(mirrored=True)` symmetrical vertical bar expansion) | Complete |
-| **Click vs. Hover Trigger Mode** | Implemented (Configurable hover/click trigger with hover intent delay timer in Settings) | Complete |
-| **Shuffle & Repeat Toggles** | Implemented (GSMTC async dispatches, `shuffle.svg` / `repeat.svg`, interactive buttons) | Complete |
-| **Fullscreen Game Auto-Hide** | Implemented (`is_foreground_fullscreen` Win32 detection, auto-hide/restore overlay) | Complete |
-| **Multi-Monitor Display Selector** | Implemented (Settings monitor selector, multi-screen geometry anchoring) | Complete |
-| **True FFT Audio Spectrum** | Implemented (`AudioAnalyzer` pure-Python Cooley-Tukey Radix-2 FFT logarithmic spectrum) | Complete |
-| **Per-App Volume Mixing** | Implemented (`set_app_volume` CoreAudio interface with master fallback) | Complete |
-| **Multi-Session Media Switcher** | Implemented (Active session dropdown in expanded card, dynamic `sessions_changed` sync) | Complete |
-| **Live Synchronized Lyrics** | Implemented (`LyricsProvider` async LRCLIB integration, LRC timestamp matching) | Complete |
-| **Geometry Lifecycle & Centering** | Fixed & Verified (Initial launch & 10+ expand/collapse cycles hold exact center X alignment) | Complete |
-| **Preference Persistence Lifecycle** | Fixed & Verified (Preferences refresh on open, sync on tray exit, QSettings preserved) | Complete |
-| **Notch Metadata Alignment** | Fixed & Verified (Metadata content group horizontally CENTER and vertically MIDDLE in 220x34 notch) | Complete |
-| **Symmetrical Expand Direction** | Fixed & Verified (Expansion originates from centered notch, center X = 960 strictly constant) | Complete |
-| **Live Media Source Icons** | Implemented (Spotify desktop/Store, VLC, YouTube metadata validation, `default_media.svg` fallback) | Complete |
-| **WASAPI Loopback Capture** | Implemented (`WASAPILoopbackCapture` native COM loopback capture, zero micro-dependency) | Complete |
-| **Equalizer APO Integration** | Implemented (`EqualizerAPOManager` detection, config generation, `mediadock_eq.txt` sync) | Complete |
-| **Audio Boost & Tone Controls** | Implemented (Preamp boost to +12 dB, Bass low-shelf, Clarity peaking, Treble air, Noise Gate) | Complete |
-| **5-Band Graphic Equalizer** | Implemented (60Hz, 250Hz, 1kHz, 4kHz, 16kHz sliders, 6 presets, Flat reset) | Complete |
-| **Global Win32 Hotkey Dispatch** | Implemented (HWND message target, Shiboken VoidPtr fix, `Ctrl+Alt+S` / `Ctrl+Alt+Space`) | Complete |
-| **Global Shortcut Recorder UI** | Implemented (`ShortcutRecorderWidget` interactive keycap pills with `+` labels, 2/3-key validation, rollback) | Complete |
-| **Frosted Gaussian-Blur Settings UI** | Implemented (`820x600` resizable Win11 DWM Acrylic / Win10 Composition frosted glass window, `185px` sidebar, 6 scrollable card-grouped pages, GitHub-linked About tab) | Complete |
-| **Custom Hex Appearance System** | Implemented (User-configurable `#RRGGBB` hex Background & Border with live preview & Reset Default) | Complete |
-| **Windows Startup Reconciliation** | Implemented (`AutostartManager.reconcile()` HKCU registry path normalization, root `sys.path`/CWD guard, delayed Explorer tray sync) | Complete |
-
-### Verification & Release Summary
-- **Source Launch Status**: `python -m src.main` -> **SUCCESSFUL**
-- **Automated Test Suite**: **305 / 305 tests passing** cleanly (`.venv\Scripts\python.exe -m unittest discover -s tests`).
-- **Whitespace & Formatting**: `git diff --check` clean (0 errors).
-- **Standalone Executable Build**: `MediaDock.spec` PyInstaller build completed cleanly (`dist/MediaDock.exe`).
+### Run Tests & Build `.exe`
+- **Run full automated test suite (322 tests)**:
+  ```cmd
+  .venv\Scripts\python.exe -m unittest discover -s tests
+  ```
+- **Run with pytest**:
+  ```cmd
+  .venv\Scripts\python.exe -m pytest -q
+  ```
+- **Check formatting / whitespace**:
+  ```cmd
+  git diff --check
+  ```
+- **Build standalone `dist/MediaDock.exe`**:
+  ```cmd
+  .venv\Scripts\python.exe scripts/build.py
+  ```
 
 ---
 
-## 7. Multi-Phase Roadmap
+## Project Structure
 
-- **V1 & DeskNotch Baseline (Current - Complete)**:
-  - Hybrid top-center notch (`220x34` flush bar with `8px` concave bezel ears & `14px` bottom corners at `y = 0` $\leftrightarrow$ `410x178` / `410x216` floating oval glass card with `32px` corners at `y = 12`).
-  - Ambient album-art radial glow, mirrored waveform visualizer, interactive scrub slider with timestamp tooltip, Pin/Lock & Settings dock buttons.
-  - Symmetrical 180ms `OutCubic` morphing with zero position drift and HWND_TOPMOST Z-order promotion.
-  - GSMTC universal media detection, multi-session switcher pill, shuffle & repeat toggles, and async LRCLIB synchronized lyrics.
-  - CoreAudio master/app volume control, WASAPI loopback capture, pure-Python Radix-2 FFT frequency spectrum & RMS energy analyzer.
-  - Equalizer APO integration: Audio boost (+12 dB preamp), quick tone controls, and 5-band graphic EQ with dynamic visualizer coupling.
-  - DPI-safe Win32 fullscreen game/video auto-hide, multi-monitor anchoring, Win32 global hotkeys with interactive 2/3-key recorder UI.
-  - Frosted Gaussian-blur Preferences dialog (`Appearance` hex customization, GitHub-linked `About` page), single-instance IPC guard, verified Windows startup reconciliation, **305/305 test coverage**, and standalone PyInstaller build.
-
-- **V2 (Future Productivity & Desk Integration)**:
-  - Focus/Pomodoro countdown timer & micro-task strip inside expanded notch.
-  - Drag-and-drop transient file shelf in expanded view.
-  - Visualizer attack/decay smoothing sliders in Audio Settings.
-  - Automatic follow-active-cursor monitor mode.
+```text
+Mediadock/
+├── assets/icons/        # SVG icons for transport controls, volume, pin, settings & players
+├── docs/                # Detailed technical architecture & user operation guides
+├── scripts/build.py     # PyInstaller packaging script -> dist/MediaDock.exe
+├── src/
+│   ├── core/            # MediaCore coordinator, data models, QSettings manager, IPC & fullscreen guard
+│   ├── media/           # WinRT GSMTC, WASAPI loopback capture, FFT/RMS analyzer, EQ APO, CoreAudio, Lyrics
+│   ├── ui/              # Hybrid notch/oval MainWindow, frosted SettingsDialog, SystemTray, Hotkeys, Theme
+│   ├── utils/           # Windows HKCU Run startup registry helper
+│   └── main.py          # App entrypoint, single-instance guard & tray bootstrap
+├── tests/               # 322 unit & integration tests across 34 test modules
+├── MediaDock.spec       # PyInstaller executable specification
+└── requirements.txt     # Python runtime & build dependencies
+```
 
 ---
 
-## 8. Documentation Index
+## Further Documentation & Milestones
 
-- [**Technical Architecture Manual**](docs/architecture.md) — Comprehensive technical reference, component diagrams, signal flows, and OS integration details.
-- [**User & Operations Guide**](docs/user_guide.md) — User setup, shortcuts, and operation details.
+- [**Technical Architecture Manual**](docs/architecture.md) — Internal component diagram, data models, OS APIs, and startup flow.
+- [**User & Operations Guide**](docs/user_guide.md) — Step-by-step usage, shortcuts, and troubleshooting.
+
+---
+
+## Contact & Support
+
+For suggestions, feedback, questions, or to report an issue:
+
+📧 **[krishna.garg.support@gmail.com](mailto:krishna.garg.support@gmail.com)**
+
+You can also open a [GitHub Issue](https://github.com/krishnagarg-2004/Mediadock/issues) directly on the repository.
+
+---
+
+<details>
+<summary><strong>Development Milestone History (Click to expand)</strong></summary>
+
+- **Foundation through V1.5**: Core WinRT GSMTC session detection, multi-session switcher, WASAPI loopback + Radix-2 FFT/RMS visualizer, Equalizer APO bridge, interactive scrubbing, album-art ambient glow, shuffle/repeat toggles, fullscreen game auto-hide, multi-monitor anchoring, Win32 global hotkeys with interactive shortcut recorder, and standalone PyInstaller packaging (**286 tests**).
+- **DeskNotch Chassis & Visibility Stability**: Hybrid flush notch / frosted glass card silhouette, Win32 DPI-safe fullscreen checks, `HWND_TOPMOST` Z-order handling, and test registry isolation (**295 tests**).
+- **Startup Fix, Frosted Gaussian-Blur Settings & Hex Appearance**: Fixed Windows startup path reconciliation and Explorer boot tray retries, redesigned `SettingsDialog` (`820×600`) with Windows 11 DWM Acrylic blur + translucent glass cards, added `#RRGGBB` hex background/border inputs, moved lyrics below `#MediaTile`, and restored hybrid flush collapsed notch (`y = 0`) + floating oval expanded card (`y = 12`) (**305 tests**).
+- **Repository Cleanup**: Removed obsolete handoff notes, empty 0-byte license placeholder, unused SVG icon, legacy `scratch/` scripts, and duplicate `venv/` folder.
+- **Custom Gradients & Expanded/Collapsed Banner Images**: Added shared `NotchAppearance` / `paint_notch_surface` renderer, 8 gradient presets + Custom 2/3-stop hex stops in 7 gradient styles, independent Expanded & Collapsed banner image pickers with crop focus, overlay dim slider, `QPixmap` mtime caching, and dual live previews (**309 tests**).
+- **Windows Audio & Control Connection Upgrade**: Fixed CoreAudio `IAudioEndpointVolume` COM GUID with live external volume/device sync for the card master volume slider & mute button, added `winrt-Windows.Media` support for GSMTC Shuffle/Repeat active button states, cleaned WASAPI COM allocations, and added a one-time permission flow (`Allow & Connect Audio...`) to install/grant UAC permissions for Equalizer APO + `+12 dB` Audio Booster on any Windows PC (**315 tests passing**).
+- **Lyrics, UX Polish & Bug Fixes**: 3-tier synchronized lyrics fetching with metadata sanitization and stale-fetch race handling; fixed shuffle/repeat active-state button highlight (icon color only, no background square); Windows volume OSD overlay restored (zero-GUID event context in CoreAudio calls); mouse-wheel no longer accidentally changes Settings controls — values only change via click; Reset button in Appearance simplified; support contact email added to About page (**322 tests passing**).
+
+</details>

@@ -19,6 +19,14 @@ class TestMediaDockWindow(unittest.TestCase):
         if cls.app is None:
             cls.app = QApplication(sys.argv)
 
+    def setUp(self) -> None:
+        from src.core.settings import SettingsManager
+        SettingsManager().set_lyrics_enabled(True)
+
+    def tearDown(self) -> None:
+        from src.core.settings import SettingsManager
+        SettingsManager().set_lyrics_enabled(True)
+
     def test_frameless_window_flags(self) -> None:
         """Verify FramelessWindow initializes with correct Qt window flags."""
         window = FramelessWindow()
@@ -146,6 +154,48 @@ class TestMediaDockWindow(unittest.TestCase):
         window.set_state(DynamicIslandState.EXPANDED, animate=False)
         self.assertEqual(window._border_radius, 32.0)
         self.assertEqual(window._ear_radius, 0.0)
+
+    def test_lyrics_loaded_signal_updates_ui_and_geometry(self) -> None:
+        """Verify lyrics_loaded_signal updates lyrics_label text and geometry in expanded mode."""
+        from src.core.models import TrackInfo
+        from src.media.lyrics_provider import LyricsLine
+        from src.ui.main_window import DynamicIslandState, EXPANDED_SIZE, LYRICS_BAR_EXTRA_HEIGHT
+
+        window = MainWindow()
+        window.set_state(DynamicIslandState.EXPANDED, animate=False)
+        self.app.processEvents()
+
+        track = TrackInfo(
+            title="In the End",
+            artist="Linkin Park",
+            duration_ms=216000,
+            position_ms=16000,
+        )
+        window.on_track_changed(track)
+        self.app.processEvents()
+
+        # Mock cached lines in provider
+        window._lyrics_provider._cached_track_key = "linkin park - in the end"
+        window._lyrics_provider._cached_lines = [
+            LyricsLine(10000, "It starts with one thing"),
+            LyricsLine(18000, "I don't know why"),
+        ]
+
+        # Emit loaded signal
+        window.lyrics_loaded_signal.emit("linkin park - in the end", True)
+        self.app.processEvents()
+
+        self.assertFalse(window.lyrics_label.isHidden())
+        self.assertIn("It starts with one thing", window.lyrics_label.text())
+        self.assertEqual(window.height(), EXPANDED_SIZE[1] + LYRICS_BAR_EXTRA_HEIGHT)
+
+        # Disable lyrics in settings
+        window._settings_manager.set_lyrics_enabled(False)
+        window._on_setting_changed("features/lyrics_enabled", False)
+        self.app.processEvents()
+
+        self.assertTrue(window.lyrics_label.isHidden())
+        self.assertEqual(window.height(), EXPANDED_SIZE[1])
 
 
 if __name__ == "__main__":

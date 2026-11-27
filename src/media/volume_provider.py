@@ -1,9 +1,11 @@
 """Volume provider interface and Windows CoreAudio implementation."""
 
 import logging
+import sys
 import threading
+import time
 from abc import ABC, abstractmethod
-from typing import Optional, Callable
+from typing import Optional, Callable, Tuple
 
 from src.core.models import VolumeState
 
@@ -65,15 +67,50 @@ class WindowsVolumeProvider(BaseVolumeProvider):
         self._is_supported = False
         self._endpoint_volume = None
         self._initialized = False
+        self._monitor_thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
+        self._last_polled_state: Optional[Tuple[int, bool]] = None
 
         self._init_core_audio()
 
-    def _init_core_audio(self) -> None:
-        """Initialize Windows CoreAudio IAudioEndpointVolume COM interface safely."""
+    @staticmethod
+    def _release_com_ptr(ptr) -> None:
+        """Safely invoke IUnknown::Release() on a raw COM c_void_p pointer."""
+        if not ptr:
+            return
         try:
             import ctypes
-            from ctypes import HRESULT, POINTER, Structure, c_float, byref, c_int, c_void_p, WINFUNCTYPE, cast
-            from ctypes.wintypes import DWORD, BOOL, LPCWSTR
+            from ctypes import POINTER, c_ulong, c_void_p, WINFUNCTYPE, cast
+            vtbl = cast(ptr, POINTER(POINTER(c_void_p))).contents
+            release_fn = WINFUNCTYPE(c_ulong, c_void_p)(vtbl[2])
+            release_fn(ptr)
+        except Exception:
+            pass
+
+    def _release_core_audio(self) -> None:
+        """Release active COM endpoint pointer and mark CoreAudio uninitialized."""
+        import ctypes
+        with self._lock:
+            ep = self._endpoint_volume
+            self._endpoint_volume = None
+            self._is_supported = False
+            self._initialized = False
+        if isinstance(ep, ctypes.c_void_p) and ep.value:
+            self._release_com_ptr(ep)
+
+    def _init_core_audio(self) -> None:
+        """Initialize Windows CoreAudio IAudioEndpointVolume COM interface safely."""
+        if sys.platform != "win32":
+            self._is_supported = False
+            self._endpoint_volume = None
+            return
+
+        device_enum = None
+        device = None
+        try:
+            import ctypes
+            from ctypes import HRESULT, POINTER, Structure, byref, c_int, c_void_p, WINFUNCTYPE, cast
+            from ctypes.wintypes import DWORD, LPCWSTR
 
             ole32 = ctypes.windll.ole32
             ole32.CoInitialize(None)
@@ -93,7 +130,8 @@ class WindowsVolumeProvider(BaseVolumeProvider):
 
             CLSID_MMDeviceEnumerator = clsid_from_string("{BCDE0395-E52F-467C-8E3D-C4579291692E}")
             IID_IMMDeviceEnumerator = clsid_from_string("{A95664D2-9614-4F35-A746-DE8DB63617E6}")
-            IID_IAudioEndpointVolume = clsid_from_string("{5CD8FA44-4F33-4615-A2FE-5C4293D48B27}")
+            # Microsoft documented IID for IAudioEndpointVolume
+            IID_IAudioEndpointVolume = clsid_from_string("{5CDF2C82-841E-4546-9722-0CF74078229A}")
 
             device_enum = c_void_p()
             hr = ole32.CoCreateInstance(
@@ -125,36 +163,104 @@ class WindowsVolumeProvider(BaseVolumeProvider):
                 logger.warning("IAudioEndpointVolume interface not supported on default endpoint: %s", hex(hr & 0xFFFFFFFF))
                 return
 
-            self._endpoint_volume = audio_vol
-            self._is_supported = True
-            self._initialized = True
+            with self._lock:
+                self._release_core_audio()
+                self._endpoint_volume = audio_vol
+                self._is_supported = True
+                self._initialized = True
         except Exception as e:
             logger.warning("Windows CoreAudio initialization unavailable: %s", e)
-            self._is_supported = False
-            self._endpoint_volume = None
+            with self._lock:
+                self._is_supported = False
+                self._endpoint_volume = None
+        finally:
+            self._release_com_ptr(device)
+            self._release_com_ptr(device_enum)
+
+    def start_listening(self) -> None:
+        """Start lightweight background monitor syncing external Windows volume/mute changes."""
+        if sys.platform != "win32":
+            return
+        with self._lock:
+            if self._monitor_thread and self._monitor_thread.is_alive():
+                return
+            self._stop_event.clear()
+            cur = self.get_volume_state()
+            self._last_polled_state = (cur.volume_percent, cur.is_muted) if cur.is_supported else None
+            self._monitor_thread = threading.Thread(
+                target=self._monitor_loop,
+                name="CoreAudioVolumeMonitor",
+                daemon=True,
+            )
+            self._monitor_thread.start()
+
+    def stop_listening(self) -> None:
+        """Stop background volume monitor thread and release CoreAudio COM resources."""
+        self._stop_event.set()
+        with self._lock:
+            thread = self._monitor_thread
+            self._monitor_thread = None
+        if thread and thread.is_alive():
+            thread.join(timeout=1.5)
+        self._release_core_audio()
+
+    def _monitor_loop(self) -> None:
+        """Poll Windows master volume/mute every 450ms and re-bind cleanly if playback device changes."""
+        ole32 = None
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ole32 = ctypes.windll.ole32
+                ole32.CoInitialize(None)
+            except Exception:
+                ole32 = None
+
+        try:
+            while not self._stop_event.is_set():
+                state = self.get_volume_state()
+                if not state.is_supported:
+                    self._init_core_audio()
+                    state = self.get_volume_state()
+                    if state.is_supported:
+                        sig = (state.volume_percent, state.is_muted)
+                        self._last_polled_state = sig
+                        self._notify_volume_changed()
+                else:
+                    sig = (state.volume_percent, state.is_muted)
+                    if sig != self._last_polled_state:
+                        self._last_polled_state = sig
+                        self._notify_volume_changed()
+                self._stop_event.wait(0.45)
+        finally:
+            if ole32 is not None:
+                try:
+                    ole32.CoUninitialize()
+                except Exception:
+                    pass
 
     def get_volume_state(self) -> VolumeState:
         """Query system master volume and mute state."""
         with self._lock:
             if not self._is_supported or not self._endpoint_volume:
                 return VolumeState.unsupported()
+            endpoint = self._endpoint_volume
 
         try:
             import ctypes
             from ctypes import HRESULT, POINTER, byref, c_float, c_void_p, WINFUNCTYPE, cast
             from ctypes.wintypes import BOOL
 
-            vtbl_vol = cast(self._endpoint_volume, POINTER(POINTER(c_void_p))).contents
+            vtbl_vol = cast(endpoint, POINTER(POINTER(c_void_p))).contents
 
             # GetMasterVolumeLevelScalar (vtable index 9)
             get_vol = WINFUNCTYPE(HRESULT, c_void_p, POINTER(c_float))(vtbl_vol[9])
             vol_scalar = c_float()
-            hr_vol = get_vol(self._endpoint_volume, byref(vol_scalar))
+            hr_vol = get_vol(endpoint, byref(vol_scalar))
 
             # GetMute (vtable index 14)
             get_mute = WINFUNCTYPE(HRESULT, c_void_p, POINTER(BOOL))(vtbl_vol[14])
             muted = BOOL()
-            hr_mute = get_mute(self._endpoint_volume, byref(muted))
+            hr_mute = get_mute(endpoint, byref(muted))
 
             if hr_vol == 0 and hr_mute == 0:
                 percent = max(0, min(100, int(round(vol_scalar.value * 100.0))))
@@ -170,17 +276,32 @@ class WindowsVolumeProvider(BaseVolumeProvider):
         with self._lock:
             if not self._is_supported or not self._endpoint_volume:
                 return False
+            endpoint = self._endpoint_volume
 
         try:
             import ctypes
-            from ctypes import HRESULT, POINTER, byref, c_float, c_void_p, WINFUNCTYPE, cast
+            from ctypes import HRESULT, POINTER, c_float, c_void_p, WINFUNCTYPE, cast
 
-            vtbl_vol = cast(self._endpoint_volume, POINTER(POINTER(c_void_p))).contents
+            vtbl_vol = cast(endpoint, POINTER(POINTER(c_void_p))).contents
 
             # SetMasterVolumeLevelScalar (vtable index 7)
+            # Pass a zero-GUID as event context so Windows shows the OSD overlay animation.
+            # Passing None suppresses the OSD; a valid GUID pointer re-enables it.
+            import ctypes
+            from ctypes import Structure, c_ulong, c_ushort, c_ubyte, byref as _byref
+
+            class _GUID(Structure):
+                _fields_ = [
+                    ("Data1", c_ulong),
+                    ("Data2", c_ushort),
+                    ("Data3", c_ushort),
+                    ("Data4", c_ubyte * 8),
+                ]
+
+            zero_guid = _GUID()
             set_vol = WINFUNCTYPE(HRESULT, c_void_p, c_float, c_void_p)(vtbl_vol[7])
             scalar = c_float(clamped / 100.0)
-            hr = set_vol(self._endpoint_volume, scalar, None)
+            hr = set_vol(endpoint, scalar, _byref(zero_guid))
             if hr == 0:
                 self._notify_volume_changed()
                 return True
@@ -194,17 +315,31 @@ class WindowsVolumeProvider(BaseVolumeProvider):
         with self._lock:
             if not self._is_supported or not self._endpoint_volume:
                 return False
+            endpoint = self._endpoint_volume
 
         try:
             import ctypes
             from ctypes import HRESULT, POINTER, c_void_p, WINFUNCTYPE, cast
             from ctypes.wintypes import BOOL
 
-            vtbl_vol = cast(self._endpoint_volume, POINTER(POINTER(c_void_p))).contents
+            vtbl_vol = cast(endpoint, POINTER(POINTER(c_void_p))).contents
 
             # SetMute (vtable index 13)
+            # Pass a zero-GUID as event context so Windows shows the OSD overlay animation.
+            import ctypes
+            from ctypes import Structure, c_ulong, c_ushort, c_ubyte, byref as _byref2
+
+            class _GUID2(Structure):
+                _fields_ = [
+                    ("Data1", c_ulong),
+                    ("Data2", c_ushort),
+                    ("Data3", c_ushort),
+                    ("Data4", c_ubyte * 8),
+                ]
+
+            zero_guid2 = _GUID2()
             set_mute_func = WINFUNCTYPE(HRESULT, c_void_p, BOOL, c_void_p)(vtbl_vol[13])
-            hr = set_mute_func(self._endpoint_volume, BOOL(muted), None)
+            hr = set_mute_func(endpoint, BOOL(muted), _byref2(zero_guid2))
             if hr == 0:
                 self._notify_volume_changed()
                 return True

@@ -126,6 +126,46 @@ class TestEqualizerAPOManager(unittest.TestCase):
         missing_mgr = EqualizerAPOManager(config_dir=os.path.join(self.config_dir, "non_existent"))
         self.assertFalse(missing_mgr.apply_eq(preamp_boost_db=2.0))
 
+    def test_connection_status_missing_vs_connected(self) -> None:
+        """Verify get_connection_status distinguishes missing dir, unlinked Include, and live connected."""
+        missing = EqualizerAPOManager(config_dir=os.path.join(self.config_dir, "missing"))
+        with patch("sys.platform", "linux"):
+            st_missing = missing.get_connection_status()
+            self.assertFalse(st_missing["installed"])
+            self.assertFalse(st_missing["connected"])
+
+        # Installed directory before apply_eq has no Include link yet
+        st_pre = self.manager.get_connection_status()
+        self.assertTrue(st_pre["installed"])
+        self.assertTrue(st_pre["writable"])
+        self.assertFalse(st_pre["include_configured"])
+        self.assertFalse(st_pre["connected"])
+
+        # After apply_eq, config.txt Include link exists -> connected is True
+        self.assertTrue(self.manager.apply_eq(preamp_boost_db=2.0))
+        st_post = self.manager.get_connection_status()
+        self.assertTrue(st_post["connected"])
+
+    def test_configure_permissions_elevated_and_connect_flow(self) -> None:
+        """Verify UAC elevation fallback path invokes installer and permission setup when missing."""
+        missing_dir = os.path.join(self.config_dir, "new_apo", "config")
+        mgr = EqualizerAPOManager(config_dir=missing_dir)
+
+        def fake_elevated(exe: str, params: str, wait: bool = True, timeout_ms: int = 120000):
+            if params == "/S":
+                os.makedirs(missing_dir, exist_ok=True)
+            return (True, 0)
+
+        with patch("sys.platform", "win32"):
+            with patch("winreg.OpenKey", side_effect=OSError("Key not found")):
+                with patch.object(mgr, "download_installer", return_value=("C:\\Temp\\Setup.exe", "")):
+                    with patch.object(mgr, "_run_elevated", side_effect=fake_elevated):
+                        ok, msg, newly_installed = mgr.connect_system_audio(preamp_boost_db=4.0)
+
+        self.assertTrue(ok)
+        self.assertTrue(newly_installed)
+        self.assertTrue(mgr.get_connection_status()["connected"])
+
 
 if __name__ == "__main__":
     unittest.main()

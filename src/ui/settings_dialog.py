@@ -1,9 +1,20 @@
 import ctypes
 import math
+import os
 import sys
 from typing import Optional, Any, Dict, List, Tuple
-from PySide6.QtCore import Qt, Signal, QUrl, __version__ as QT_RUNTIME_VERSION
-from PySide6.QtGui import QFont, QKeyEvent, QColor, QDesktopServices, QGuiApplication, QPainter
+from PySide6.QtCore import Qt, Signal, QUrl, QRectF, QThread, __version__ as QT_RUNTIME_VERSION
+from PySide6.QtGui import (
+    QFont,
+    QKeyEvent,
+    QColor,
+    QDesktopServices,
+    QGuiApplication,
+    QPainter,
+    QPainterPath,
+    QPixmap,
+)
+from PySide6.QtCore import QEvent, QObject
 from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -17,14 +28,28 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSlider,
     QComboBox,
+    QFileDialog,
+    QMessageBox,
+    QProgressDialog,
     QScrollArea,
     QListWidget,
     QListWidgetItem,
     QStackedWidget,
 )
 
+
+class _NoScrollEventFilter(QObject):
+    """Event filter that prevents mouse-wheel from changing widget values."""
+
+    def eventFilter(self, obj, event):  # type: ignore[override]
+        if event.type() == QEvent.Type.Wheel:
+            event.ignore()
+            return True
+        return super().eventFilter(obj, event)
+
 from src.core.settings import SettingsManager, parse_hex_color
 from src.media.equalizer_apo import EqualizerAPOManager, EQUALIZER_APO_DOWNLOAD_URL
+from src.ui.frameless_window import build_desknotch_path
 from src.ui.theme import (
     COLOR_BG_BASE,
     COLOR_BG_MANTLE,
@@ -34,7 +59,13 @@ from src.ui.theme import (
     COLOR_TEXT_MUTED,
     COLOR_ACCENT_BLUE,
     COLOR_ACCENT_GREEN,
+    GRADIENT_PRESETS,
+    GRADIENT_STYLES,
+    IMAGE_ALIGNMENTS,
+    NotchAppearance,
     get_button_stylesheet,
+    invalidate_banner_cache,
+    paint_notch_surface,
 )
 
 GITHUB_REPO_URL = "https://github.com/krishnagarg-2004/Mediadock"
@@ -365,6 +396,247 @@ class CollapseDelaySpinBox(QSpinBox):
         else:
             event.ignore()
 
+    def wheelEvent(self, event) -> None:  # type: ignore[override]
+        """Ignore mouse-wheel so value only changes via click buttons."""
+        event.ignore()
+
+
+class _AudioSetupWorker(QThread):
+    """Background worker that installs/configures Equalizer APO permissions without freezing GUI."""
+
+    progress = Signal(int, str)
+    finished_result = Signal(bool, str, bool)
+
+    def __init__(
+        self,
+        apo_manager: EqualizerAPOManager,
+        settings_manager: SettingsManager,
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self._apo = apo_manager
+        self._settings = settings_manager
+
+    def run(self) -> None:
+        installed = self._apo.is_installed()
+        if not installed:
+            self.progress.emit(10, "Downloading official Equalizer APO installer...")
+
+        ok, msg, newly_installed = self._apo.connect_system_audio(
+            preamp_boost_db=self._settings.get_preamp_boost_db(),
+            bass_db=self._settings.get_bass_db(),
+            clarity_db=self._settings.get_clarity_db(),
+            treble_db=self._settings.get_treble_db(),
+            eq_bands=self._settings.get_eq_bands(),
+            eq_enabled=self._settings.get_eq_enabled(),
+            progress_cb=lambda pct: self.progress.emit(min(70, int(pct * 0.7)), "Downloading Equalizer APO installer..."),
+        )
+        self.progress.emit(100, msg)
+        self.finished_result.emit(ok, msg, newly_installed)
+
+
+def prompt_and_connect_system_audio(
+    settings_manager: SettingsManager,
+    media_core: Optional[Any] = None,
+    apo_manager: Optional[EqualizerAPOManager] = None,
+    parent: Optional[QWidget] = None,
+) -> bool:
+    """Ask user permission cleanly and connect MediaDock EQ & Audio Booster to Windows."""
+    apo = apo_manager or (media_core.apo_manager if media_core and hasattr(media_core, "apo_manager") else EqualizerAPOManager())
+    status = apo.get_connection_status()
+
+    if status.get("connected"):
+        if media_core and hasattr(media_core, "sync_audio_settings"):
+            media_core.sync_audio_settings(settings_manager)
+        return True
+
+    settings_manager.set_audio_connection_prompted(True)
+
+    box = QMessageBox(parent)
+    box.setWindowTitle("MediaDock — Connect Computer Audio")
+    box.setIcon(QMessageBox.Icon.Question)
+    if status.get("installed"):
+        box.setText("Allow MediaDock to connect Equalizer & Audio Booster permissions?")
+        box.setInformativeText(
+            "Windows Master Volume & Mute work automatically.\n\n"
+            "Equalizer APO is installed on this PC, so MediaDock needs one-time Administrator permission "
+            "(Windows UAC) to link mediadock_eq.txt so your Preamp Booster (+12 dB), Bass, Clarity, "
+            "Treble, and 5-Band EQ adjust your real speaker/headphone sound live."
+        )
+    else:
+        box.setText("Allow MediaDock to connect system-wide Equalizer & Audio Booster?")
+        box.setInformativeText(
+            "Windows Master Volume, Mute button, and the Live Audio Visualizer are connected right now.\n\n"
+            "To adjust your computer's real speaker/headphone sound (Preamp +12 dB Boost, Bass, Treble, "
+            "and 5-Band EQ), MediaDock uses Equalizer APO (free open-source Windows audio driver).\n\n"
+            "If you allow, MediaDock will download the official Equalizer APO installer, ask Windows "
+            "Administrator permission (UAC) to set it up cleanly, and open Audio Device Selector so you "
+            "can tick your speakers or headphones."
+        )
+    btn_allow = box.addButton("Allow & Connect", QMessageBox.ButtonRole.AcceptRole)
+    box.addButton("Later (Visualizer Only)", QMessageBox.ButtonRole.RejectRole)
+    box.exec()
+
+    if box.clickedButton() != btn_allow:
+        return False
+
+    progress = QProgressDialog("Preparing Windows audio connection...", "", 0, 100, parent)
+    progress.setWindowTitle("Connecting Windows Audio...")
+    progress.setCancelButton(None)
+    progress.setWindowModality(Qt.WindowModality.WindowModal)
+    progress.setMinimumDuration(0)
+    progress.setValue(15)
+    progress.show()
+
+    result_holder = {"ok": False, "msg": "", "newly_installed": False}
+    worker = _AudioSetupWorker(apo, settings_manager, parent=parent)
+
+    def _on_progress(val: int, txt: str) -> None:
+        progress.setValue(val)
+        if txt:
+            progress.setLabelText(txt)
+
+    def _on_done(ok: bool, msg: str, newly_installed: bool) -> None:
+        result_holder["ok"] = ok
+        result_holder["msg"] = msg
+        result_holder["newly_installed"] = newly_installed
+        progress.setValue(100)
+        progress.close()
+
+    worker.progress.connect(_on_progress)
+    worker.finished_result.connect(_on_done)
+    worker.start()
+
+    from PySide6.QtWidgets import QApplication
+    while worker.isRunning():
+        QApplication.processEvents()
+        worker.wait(30)
+
+    if result_holder["ok"]:
+        if media_core and hasattr(media_core, "sync_audio_settings"):
+            media_core.sync_audio_settings(settings_manager)
+        info = QMessageBox(parent)
+        info.setIcon(QMessageBox.Icon.Information)
+        info.setWindowTitle("Windows Audio Connected")
+        if result_holder["newly_installed"]:
+            info.setText("Equalizer APO installed and connected to MediaDock!")
+            info.setInformativeText(
+                "In the Audio Device Selector window opening next, make sure your Speakers / Headphones are "
+                "checked, then reboot once if prompted by Equalizer APO. Afterward all MediaDock EQ & "
+                "Audio Boost sliders adjust your PC sound live."
+            )
+            info.exec()
+            apo.launch_device_selector()
+        else:
+            info.setText("System Equalizer & Audio Booster connected!")
+            info.setInformativeText(result_holder["msg"])
+            info.exec()
+        return True
+
+    warn = QMessageBox(parent)
+    warn.setIcon(QMessageBox.Icon.Warning)
+    warn.setWindowTitle("Audio Connection Not Completed")
+    warn.setText("Could not finish connecting Equalizer APO automatically.")
+    warn.setInformativeText(
+        f"{result_holder['msg']}\n\n"
+        "Note: Master Volume, Mute button, and the Live Audio Visualizer continue working normally.\n"
+        "You can retry anytime in Settings -> Audio & Equalizer or download Equalizer APO manually."
+    )
+    btn_open_dl = warn.addButton("Open Download Page", QMessageBox.ButtonRole.ActionRole)
+    warn.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+    warn.exec()
+    if warn.clickedButton() == btn_open_dl:
+        QDesktopServices.openUrl(QUrl(EQUALIZER_APO_DOWNLOAD_URL))
+    return False
+
+
+class _NotchPreviewCanvas(QWidget):
+    """Live preview widget rendering either a collapsed notch or an expanded oval card."""
+
+    def __init__(self, is_expanded: bool = False, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._is_expanded = is_expanded
+        self._appearance = NotchAppearance()
+        if is_expanded:
+            self.setFixedSize(290, 108)
+        else:
+            self.setFixedSize(220, 34)
+
+    def set_appearance(self, appearance: NotchAppearance) -> None:
+        """Update live preview appearance snapshot and repaint."""
+        self._appearance = appearance
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        """Paint scaled preview silhouette with current solid, gradient, or banner image fill."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        if self._is_expanded:
+            rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+            path = QPainterPath()
+            path.addRoundedRect(rect, 22.0, 22.0)
+            inner_path = QPainterPath()
+            inner_path.addRoundedRect(rect.adjusted(1.0, 1.0, -1.0, -1.0), 21.0, 21.0)
+            paint_notch_surface(
+                painter,
+                rect,
+                path,
+                inner_path,
+                self._appearance,
+                is_expanded=True,
+                ambient_accent=COLOR_ACCENT_GREEN,
+            )
+
+            # Translucent mockup MediaTile + controls inside expanded preview
+            tile_rect = QRectF(12.0, 10.0, rect.width() - 24.0, 68.0)
+            tile_path = QPainterPath()
+            tile_path.addRoundedRect(tile_rect, 13.0, 13.0)
+            tile_bg = QColor(10, 10, 14, 72) if self._appearance.bg_mode in ("gradient", "image") else QColor(255, 255, 255, 12)
+            painter.fillPath(tile_path, tile_bg)
+            painter.setPen(QColor(255, 255, 255, 30))
+            painter.drawPath(tile_path)
+
+            art_rect = QRectF(19.0, 17.0, 52.0, 52.0)
+            art_path = QPainterPath()
+            art_path.addRoundedRect(art_rect, 8.0, 8.0)
+            painter.fillPath(art_path, QColor(255, 255, 255, 24))
+            painter.setPen(QColor("#FFFFFF"))
+            painter.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+            painter.drawText(QRectF(80.0, 18.0, 185.0, 18.0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "Midnight City")
+            painter.setPen(QColor(255, 255, 255, 175))
+            painter.setFont(QFont("Segoe UI", 8))
+            painter.drawText(QRectF(80.0, 35.0, 185.0, 16.0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "M83 • Expanded Banner Preview")
+            painter.drawText(QRectF(80.0, 51.0, 185.0, 16.0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "⏮   ▶   ⏭    🔊 ━━━")
+            painter.setPen(QColor(255, 255, 255, 135))
+            painter.drawLine(18, 90, 260, 90)
+        else:
+            rect = QRectF(self.rect()).adjusted(0.5, 0.0, -0.5, -0.5)
+            path = build_desknotch_path(rect, bottom_radius=14.0, ear_radius=8.0)
+            inner_path = build_desknotch_path(
+                rect.adjusted(1.0, 0.0, -1.0, -1.0), bottom_radius=13.0, ear_radius=8.0
+            )
+            paint_notch_surface(
+                painter,
+                rect,
+                path,
+                inner_path,
+                self._appearance,
+                is_expanded=False,
+            )
+
+            txt_color = "#FFFFFF"
+            if self._appearance.bg_mode == "solid" and self._appearance.bg_color.lightness() > 165:
+                txt_color = "#111115"
+            painter.setPen(QColor(txt_color))
+            painter.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
+            painter.drawText(
+                QRectF(16.0, 2.0, rect.width() - 32.0, rect.height() - 4.0),
+                Qt.AlignmentFlag.AlignCenter,
+                "♪  MediaDock — Now Playing   9:41",
+            )
+        painter.end()
+
 
 class SettingsDialog(QDialog):
     """Spacious frosted Gaussian-blur landscape Preferences dialog with card-based scrollable pages."""
@@ -595,6 +867,53 @@ class SettingsDialog(QDialog):
 
         row_layout.addLayout(ctrl_container)
         card_layout.addWidget(row_widget)
+
+    def _create_hex_color_control(
+        self, parent: QWidget, placeholder: str = "#000000"
+    ) -> Tuple[QFrame, QLineEdit]:
+        """Create paired color swatch preview and monospace #RRGGBB hex line edit."""
+        swatch = QFrame(parent)
+        swatch.setFixedSize(34, 34)
+        edit = QLineEdit(parent)
+        edit.setFixedSize(118, 34)
+        edit.setMaxLength(7)
+        edit.setPlaceholderText(placeholder)
+        edit.setFont(QFont("Consolas", 11))
+        edit.textChanged.connect(self._on_appearance_hex_changed)
+        return swatch, edit
+
+    @staticmethod
+    def _add_banner_picker_block(
+        card_layout: QVBoxLayout,
+        title: str,
+        description: str,
+        path_edit: QLineEdit,
+        action_buttons: List[QPushButton],
+    ) -> None:
+        """Place full-width label/description over an unconstrained image path + action buttons row."""
+        block = QWidget()
+        block_l = QVBoxLayout(block)
+        block_l.setContentsMargins(0, 4, 0, 4)
+        block_l.setSpacing(6)
+
+        lbl_title = QLabel(title, block)
+        lbl_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()}; font-size: 12px; font-weight: 600;")
+        block_l.addWidget(lbl_title)
+
+        lbl_desc = QLabel(description, block)
+        lbl_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px;")
+        lbl_desc.setWordWrap(True)
+        block_l.addWidget(lbl_desc)
+
+        ctrl_row = QHBoxLayout()
+        ctrl_row.setContentsMargins(0, 0, 0, 0)
+        ctrl_row.setSpacing(8)
+        ctrl_row.addWidget(path_edit, 1)
+        for btn in action_buttons:
+            ctrl_row.addWidget(btn)
+        block_l.addLayout(ctrl_row)
+
+        card_layout.addWidget(block)
 
     def _init_ui(self) -> None:
         """Initialize translucent frosted-glass sidebar navigation, cards, and dialog controls."""
@@ -908,38 +1227,37 @@ class SettingsDialog(QDialog):
 
         self.stacked_widget.addWidget(page_di)
 
-        # Page 3: Appearance (Hex Background & Border Only — No Status Colors)
+        # Page 3: Appearance (Solid Hex, Gradients & Custom Expanded/Collapsed Banner Images)
         page_app, layout_app = self._create_scrollable_page(
             "Appearance",
-            "Customize the Dynamic Island background and border colors directly using 6-digit hex color codes.",
+            "Customize the Dynamic Island using solid hex colors, curated/custom gradients, or personal banner images for the expanded and collapsed views.",
         )
 
-        card_colors, layout_colors = self._create_setting_card(page_app, "Custom Hex Colors")
+        card_colors, layout_colors = self._create_setting_card(page_app, "Background Style & Hex Colors")
 
-        self.swatch_bg_preview = QFrame(card_colors)
-        self.swatch_bg_preview.setFixedSize(34, 34)
-        self.txt_bg_color_hex = QLineEdit(card_colors)
-        self.txt_bg_color_hex.setFixedSize(124, 34)
-        self.txt_bg_color_hex.setMaxLength(7)
-        self.txt_bg_color_hex.setPlaceholderText("#000000")
-        self.txt_bg_color_hex.setFont(QFont("Consolas", 11))
-        self.txt_bg_color_hex.textChanged.connect(self._on_appearance_hex_changed)
+        self.combo_bg_mode = QComboBox(card_colors)
+        self.combo_bg_mode.addItem("Solid Color", "solid")
+        self.combo_bg_mode.addItem("Gradient", "gradient")
+        self.combo_bg_mode.addItem("Custom Banner Image", "image")
+        self.combo_bg_mode.setFixedWidth(190)
+        self.combo_bg_mode.currentIndexChanged.connect(self._on_bg_mode_changed)
+        self._add_control_row(
+            layout_colors,
+            "Background Style",
+            self.combo_bg_mode,
+            "Choose solid color fill, multi-stop gradient, or custom banner images.",
+        )
+
+        self.swatch_bg_preview, self.txt_bg_color_hex = self._create_hex_color_control(card_colors, "#000000")
         self._add_control_row(
             layout_colors,
             "Background Color (Hex)",
             self.txt_bg_color_hex,
-            "Fill color used by the Dynamic Island capsule and expanded card (e.g. #000000 or #0E1117).",
+            "Solid fill color (and fallback when a banner image is not set), e.g. #000000 or #0E1117.",
             extra_controls=[self.swatch_bg_preview],
         )
 
-        self.swatch_border_preview = QFrame(card_colors)
-        self.swatch_border_preview.setFixedSize(34, 34)
-        self.txt_border_color_hex = QLineEdit(card_colors)
-        self.txt_border_color_hex.setFixedSize(124, 34)
-        self.txt_border_color_hex.setMaxLength(7)
-        self.txt_border_color_hex.setPlaceholderText("#000000")
-        self.txt_border_color_hex.setFont(QFont("Consolas", 11))
-        self.txt_border_color_hex.textChanged.connect(self._on_appearance_hex_changed)
+        self.swatch_border_preview, self.txt_border_color_hex = self._create_hex_color_control(card_colors, "#000000")
         self._add_control_row(
             layout_colors,
             "Border Color (Hex)",
@@ -956,7 +1274,7 @@ class SettingsDialog(QDialog):
 
         app_actions_row = QHBoxLayout()
         app_actions_row.addStretch()
-        self.btn_reset_appearance = QPushButton("Reset to Default (#000000)", card_colors)
+        self.btn_reset_appearance = QPushButton("Reset", card_colors)
         self.btn_reset_appearance.setFixedHeight(30)
         self.btn_reset_appearance.setStyleSheet(get_button_stylesheet())
         self.btn_reset_appearance.clicked.connect(self._reset_appearance_defaults)
@@ -964,26 +1282,184 @@ class SettingsDialog(QDialog):
         layout_colors.addLayout(app_actions_row)
         layout_app.addWidget(card_colors)
 
-        card_preview, layout_preview = self._create_setting_card(page_app, "Live Notch Preview")
+        # Gradient Options Card
+        card_grad, layout_grad = self._create_setting_card(page_app, "Gradient Options")
+
+        self.combo_gradient_preset = QComboBox(card_grad)
+        for preset_name in GRADIENT_PRESETS:
+            self.combo_gradient_preset.addItem(preset_name, preset_name)
+        self.combo_gradient_preset.addItem("Custom", "Custom")
+        self.combo_gradient_preset.setFixedWidth(190)
+        self.combo_gradient_preset.currentIndexChanged.connect(self._on_gradient_preset_changed)
+        self._add_control_row(
+            layout_grad,
+            "Gradient Preset",
+            self.combo_gradient_preset,
+            "Pick a curated multi-stop theme or customize the hex stops below.",
+        )
+
+        self.combo_gradient_style = QComboBox(card_grad)
+        for style_key, style_label in GRADIENT_STYLES:
+            self.combo_gradient_style.addItem(style_label, style_key)
+        self.combo_gradient_style.setFixedWidth(220)
+        self.combo_gradient_style.currentIndexChanged.connect(self._on_gradient_style_changed)
+        self._add_control_row(
+            layout_grad,
+            "Gradient Style",
+            self.combo_gradient_style,
+            "Direction or pattern: horizontal, vertical, diagonal, radial glow, conic sweep, or mesh.",
+        )
+
+        self.swatch_grad_1, self.txt_grad_color_1 = self._create_hex_color_control(card_grad, "#071A20")
+        self.txt_grad_color_1.textChanged.connect(self._on_gradient_hex_edited)
+        self._add_control_row(
+            layout_grad,
+            "Start Color (Hex)",
+            self.txt_grad_color_1,
+            "Primary gradient start color.",
+            extra_controls=[self.swatch_grad_1],
+        )
+
+        self.swatch_grad_2, self.txt_grad_color_2 = self._create_hex_color_control(card_grad, "Optional")
+        self.txt_grad_color_2.textChanged.connect(self._on_gradient_hex_edited)
+        self.btn_clear_grad_mid = QPushButton("Clear", card_grad)
+        self.btn_clear_grad_mid.setFixedSize(56, 30)
+        self.btn_clear_grad_mid.setStyleSheet(get_button_stylesheet())
+        self.btn_clear_grad_mid.clicked.connect(lambda: self.txt_grad_color_2.setText(""))
+        self._add_control_row(
+            layout_grad,
+            "Middle Color (Optional)",
+            self.btn_clear_grad_mid,
+            "Optional middle stop for 3-color gradients; leave blank for a crisp 2-color blend.",
+            extra_controls=[self.swatch_grad_2, self.txt_grad_color_2],
+        )
+
+        self.swatch_grad_3, self.txt_grad_color_3 = self._create_hex_color_control(card_grad, "#1B3B6F")
+        self.txt_grad_color_3.textChanged.connect(self._on_gradient_hex_edited)
+        self._add_control_row(
+            layout_grad,
+            "End Color (Hex)",
+            self.txt_grad_color_3,
+            "Gradient end color.",
+            extra_controls=[self.swatch_grad_3],
+        )
+        layout_app.addWidget(card_grad)
+
+        # Custom Image Banners Card (Expanded & Collapsed)
+        card_banners, layout_banners = self._create_setting_card(page_app, "Custom Image Banners (Expanded & Collapsed)")
+
+        self.txt_expanded_image_path = QLineEdit(card_banners)
+        self.txt_expanded_image_path.setPlaceholderText("Select an image for the expanded card banner (PNG, JPG, WEBP)...")
+        self.txt_expanded_image_path.setFixedHeight(32)
+        self.txt_expanded_image_path.textChanged.connect(self._on_appearance_hex_changed)
+        self.btn_browse_expanded_image = QPushButton("Browse...", card_banners)
+        self.btn_browse_expanded_image.setFixedSize(78, 32)
+        self.btn_browse_expanded_image.setStyleSheet(get_button_stylesheet())
+        self.btn_browse_expanded_image.clicked.connect(lambda: self._browse_banner_image("expanded"))
+        self.btn_clear_expanded_image = QPushButton("Clear", card_banners)
+        self.btn_clear_expanded_image.setFixedSize(58, 32)
+        self.btn_clear_expanded_image.setStyleSheet(get_button_stylesheet())
+        self.btn_clear_expanded_image.clicked.connect(lambda: self._clear_banner_image("expanded"))
+        self._add_banner_picker_block(
+            layout_banners,
+            "Expanded Card Banner",
+            "Custom image banner displayed behind the expanded oval media card.",
+            self.txt_expanded_image_path,
+            [self.btn_browse_expanded_image, self.btn_clear_expanded_image],
+        )
+
+        self.txt_collapsed_image_path = QLineEdit(card_banners)
+        self.txt_collapsed_image_path.setPlaceholderText("Select an image for the collapsed notch strip...")
+        self.txt_collapsed_image_path.setFixedHeight(32)
+        self.txt_collapsed_image_path.textChanged.connect(self._on_appearance_hex_changed)
+        self.btn_browse_collapsed_image = QPushButton("Browse...", card_banners)
+        self.btn_browse_collapsed_image.setFixedSize(78, 32)
+        self.btn_browse_collapsed_image.setStyleSheet(get_button_stylesheet())
+        self.btn_browse_collapsed_image.clicked.connect(lambda: self._browse_banner_image("collapsed"))
+        self.btn_copy_expanded_to_collapsed = QPushButton("Use Expanded", card_banners)
+        self.btn_copy_expanded_to_collapsed.setFixedSize(102, 32)
+        self.btn_copy_expanded_to_collapsed.setStyleSheet(get_button_stylesheet())
+        self.btn_copy_expanded_to_collapsed.clicked.connect(self._copy_expanded_banner_to_collapsed)
+        self.btn_clear_collapsed_image = QPushButton("Clear", card_banners)
+        self.btn_clear_collapsed_image.setFixedSize(58, 32)
+        self.btn_clear_collapsed_image.setStyleSheet(get_button_stylesheet())
+        self.btn_clear_collapsed_image.clicked.connect(lambda: self._clear_banner_image("collapsed"))
+        self._add_banner_picker_block(
+            layout_banners,
+            "Collapsed Notch Banner",
+            "Custom image banner rendered inside the compact 220×34 top-bezel notch.",
+            self.txt_collapsed_image_path,
+            [
+                self.btn_browse_collapsed_image,
+                self.btn_copy_expanded_to_collapsed,
+                self.btn_clear_collapsed_image,
+            ],
+        )
+
+        self.combo_image_alignment = QComboBox(card_banners)
+        for align_key, align_label in IMAGE_ALIGNMENTS:
+            self.combo_image_alignment.addItem(align_label, align_key)
+        self.combo_image_alignment.setFixedWidth(170)
+        self.combo_image_alignment.currentIndexChanged.connect(self._on_appearance_hex_changed)
+        self._add_control_row(
+            layout_banners,
+            "Banner Crop Focus",
+            self.combo_image_alignment,
+            "Controls whether wide or tall banner photos anchor toward the top, center, or bottom.",
+        )
+
+        self.sld_image_dim = QSlider(Qt.Orientation.Horizontal, card_banners)
+        self.sld_image_dim.setRange(0, 85)
+        self.sld_image_dim.setFixedWidth(160)
+        self.sld_image_dim.setStyleSheet(
+            "QSlider::groove:horizontal { height: 5px; background: #262630; border-radius: 2px; }"
+            "QSlider::sub-page:horizontal { background: #00FF7F; border-radius: 2px; }"
+            "QSlider::handle:horizontal { background: #FFFFFF; border: 1px solid #141414; width: 14px; margin-top: -5px; margin-bottom: -5px; border-radius: 7px; }"
+        )
+        self.lbl_image_dim_val = QLabel("35%", card_banners)
+        self.lbl_image_dim_val.setFixedWidth(40)
+        self.lbl_image_dim_val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.lbl_image_dim_val.setStyleSheet(f"color: {COLOR_ACCENT_GREEN.name()}; font-weight: bold;")
+        self.sld_image_dim.valueChanged.connect(self._on_image_dim_changed)
+        self._add_control_row(
+            layout_banners,
+            "Banner Overlay Dim",
+            self.lbl_image_dim_val,
+            "Dark glass tint above banner images to keep media titles and controls easy to read.",
+            extra_controls=[self.sld_image_dim],
+        )
+        layout_app.addWidget(card_banners)
+
+        # Dual Live Preview Card (Collapsed + Expanded)
+        card_preview, layout_preview = self._create_setting_card(page_app, "Live Preview (Collapsed & Expanded)")
         preview_stage = QFrame(card_preview)
-        preview_stage.setFixedHeight(78)
-        preview_stage.setStyleSheet("background-color: #181820; border: 1px dashed #2E2E38; border-radius: 8px;")
-        stage_layout = QHBoxLayout(preview_stage)
+        preview_stage.setMinimumHeight(190)
+        preview_stage.setStyleSheet("background-color: #181820; border: 1px dashed #2E2E38; border-radius: 10px;")
+        stage_layout = QVBoxLayout(preview_stage)
         stage_layout.setContentsMargins(16, 12, 16, 12)
-        stage_layout.addStretch()
+        stage_layout.setSpacing(10)
+        stage_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.appearance_preview_pill = QFrame(preview_stage)
-        self.appearance_preview_pill.setFixedSize(250, 38)
-        pill_layout = QHBoxLayout(self.appearance_preview_pill)
-        pill_layout.setContentsMargins(14, 0, 14, 0)
-        pill_layout.setSpacing(8)
-        self.appearance_preview_title = QLabel("♪  MediaDock — Now Playing", self.appearance_preview_pill)
-        self.appearance_preview_title.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: 600; background: transparent; border: none;")
-        self.appearance_preview_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        pill_layout.addWidget(self.appearance_preview_title)
+        self.preview_collapsed_notch = _NotchPreviewCanvas(is_expanded=False, parent=preview_stage)
+        self.preview_expanded_card = _NotchPreviewCanvas(is_expanded=True, parent=preview_stage)
+        # Preserve attribute compatibility with existing tests/inspection
+        self.appearance_preview_pill = self.preview_collapsed_notch
+        self.appearance_preview_title = QLabel("♪  MediaDock — Now Playing", preview_stage)
+        self.appearance_preview_title.hide()
 
-        stage_layout.addWidget(self.appearance_preview_pill)
-        stage_layout.addStretch()
+        lbl_col_cap = QLabel("Collapsed Notch (220×34)", preview_stage)
+        lbl_col_cap.setStyleSheet("color: #8A8A9A; font-size: 10px; background: transparent; border: none;")
+        lbl_col_cap.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        lbl_exp_cap = QLabel("Expanded Oval (410×178)", preview_stage)
+        lbl_exp_cap.setStyleSheet("color: #8A8A9A; font-size: 10px; background: transparent; border: none;")
+        lbl_exp_cap.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        stage_layout.addWidget(lbl_col_cap)
+        stage_layout.addWidget(self.preview_collapsed_notch, 0, Qt.AlignmentFlag.AlignHCenter)
+        stage_layout.addWidget(lbl_exp_cap)
+        stage_layout.addWidget(self.preview_expanded_card, 0, Qt.AlignmentFlag.AlignHCenter)
+
         layout_preview.addWidget(preview_stage)
         layout_app.addWidget(card_preview)
         layout_app.addStretch(1)
@@ -996,32 +1472,59 @@ class SettingsDialog(QDialog):
             "Configure visualizer spectrum mode, software/APO boost, tone filters, and 5-band equalizer.",
         )
 
-        # 1. Equalizer APO Status & Master Toggle Card
-        card_apo, layout_card_outer = self._create_setting_card(page_aud, "Audio Processing Engine")
+        # 1. Equalizer APO & Windows Audio Connection Card
+        card_apo, layout_card_outer = self._create_setting_card(page_aud, "Audio Processing & Computer Connection")
+
+        self.lbl_volume_status = QLabel("", card_apo)
+        self.lbl_volume_status.setStyleSheet("color: #8A8A9A; font-size: 11px; font-weight: 600;")
+        self.lbl_volume_status.setWordWrap(True)
+        layout_card_outer.addWidget(self.lbl_volume_status)
+
         layout_card = QHBoxLayout()
         layout_card.setContentsMargins(0, 0, 0, 0)
-        layout_card.setSpacing(12)
+        layout_card.setSpacing(10)
 
-        is_apo_installed = self._apo_manager.is_installed()
-        if is_apo_installed:
-            lbl_apo_status = QLabel("● System-wide audio boost & EQ active (Equalizer APO)", card_apo)
-            lbl_apo_status.setStyleSheet("color: #00FF7F; font-size: 11px; font-weight: bold;")
-            layout_card.addWidget(lbl_apo_status, 1)
-        else:
-            lbl_apo_status = QLabel("○ Equalizer APO not detected. Visualizer EQ active.", card_apo)
-            lbl_apo_status.setStyleSheet("color: #E0AF68; font-size: 11px;")
-            lbl_apo_status.setWordWrap(True)
-            btn_install_apo = QPushButton("Install Driver...", card_apo)
-            btn_install_apo.setFixedHeight(28)
-            btn_install_apo.setStyleSheet(get_button_stylesheet())
-            btn_install_apo.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(EQUALIZER_APO_DOWNLOAD_URL)))
-            layout_card.addWidget(lbl_apo_status, 1)
-            layout_card.addWidget(btn_install_apo)
+        self.lbl_apo_status = QLabel("", card_apo)
+        self.lbl_apo_status.setWordWrap(True)
+        layout_card.addWidget(self.lbl_apo_status, 1)
 
         self.chk_eq_enabled = QCheckBox("Enable EQ & Enhancements", card_apo)
         self.chk_eq_enabled.stateChanged.connect(self._on_audio_control_changed)
         layout_card.addWidget(self.chk_eq_enabled)
         layout_card_outer.addLayout(layout_card)
+
+        apo_actions = QHBoxLayout()
+        apo_actions.setContentsMargins(0, 0, 0, 0)
+        apo_actions.setSpacing(8)
+
+        self.btn_connect_audio = QPushButton("Allow && Connect Audio...", card_apo)
+        self.btn_connect_audio.setFixedHeight(28)
+        self.btn_connect_audio.setStyleSheet(get_button_stylesheet())
+        self.btn_connect_audio.clicked.connect(self._on_connect_audio_clicked)
+
+        self.btn_audio_devices = QPushButton("Audio Devices...", card_apo)
+        self.btn_audio_devices.setFixedHeight(28)
+        self.btn_audio_devices.setStyleSheet(get_button_stylesheet())
+        self.btn_audio_devices.clicked.connect(lambda: self._apo_manager.launch_device_selector())
+
+        self.btn_apply_audio_now = QPushButton("Apply Audio Now", card_apo)
+        self.btn_apply_audio_now.setFixedHeight(28)
+        self.btn_apply_audio_now.setStyleSheet(get_button_stylesheet())
+        self.btn_apply_audio_now.clicked.connect(self._apply_live_audio_preview)
+
+        self.btn_install_apo = QPushButton("Download Page...", card_apo)
+        self.btn_install_apo.setFixedHeight(28)
+        self.btn_install_apo.setStyleSheet(get_button_stylesheet())
+        self.btn_install_apo.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(EQUALIZER_APO_DOWNLOAD_URL)))
+
+        apo_actions.addWidget(self.btn_connect_audio)
+        apo_actions.addWidget(self.btn_audio_devices)
+        apo_actions.addWidget(self.btn_apply_audio_now)
+        apo_actions.addWidget(self.btn_install_apo)
+        apo_actions.addStretch()
+        layout_card_outer.addLayout(apo_actions)
+
+        self._refresh_audio_connection_status()
 
         self.combo_spectrum_mode = QComboBox(card_apo)
         self.combo_spectrum_mode.setFixedWidth(220)
@@ -1271,6 +1774,21 @@ class SettingsDialog(QDialog):
         repo_btn_row.addWidget(self.btn_report_issue)
         repo_btn_row.addStretch()
         layout_repo.addLayout(repo_btn_row)
+
+        # Contact & Support email
+        lbl_contact = QLabel(
+            'Suggestions, feedback, questions, or issues:\u2002'
+            '<a href="mailto:krishna.garg.support@gmail.com" '
+            'style="color: #00FF7F; text-decoration: none;">'
+            'krishna.garg.support@gmail.com</a>',
+            card_repo,
+        )
+        lbl_contact.setOpenExternalLinks(True)
+        lbl_contact.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        lbl_contact.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 12px;")
+        lbl_contact.setWordWrap(True)
+        layout_repo.addWidget(lbl_contact)
+
         layout_about.addWidget(card_repo)
 
         card_env, layout_env = self._create_setting_card(page_about, "Controls & Runtime Details")
@@ -1349,6 +1867,20 @@ class SettingsDialog(QDialog):
         right_layout.addLayout(btn_layout)
         root_layout.addWidget(right_container, 1)
 
+        # Install no-scroll filter on all interactive controls so mouse-wheel
+        # never accidentally changes a value; click/keyboard only.
+        self._install_no_scroll_filters()
+
+    def _install_no_scroll_filters(self) -> None:
+        """Install _NoScrollEventFilter on every QComboBox, QSlider, and QSpinBox in this dialog."""
+        self._no_scroll_filter = _NoScrollEventFilter(self)
+        for widget in self.findChildren(QComboBox):
+            widget.installEventFilter(self._no_scroll_filter)
+        for widget in self.findChildren(QSlider):
+            widget.installEventFilter(self._no_scroll_filter)
+        for widget in self.findChildren(QSpinBox):
+            widget.installEventFilter(self._no_scroll_filter)
+
     @property
     def txt_hotkey_show_hide(self) -> ShortcutRecorderWidget:
         """Backward compatibility property wrapper."""
@@ -1365,8 +1897,95 @@ class SettingsDialog(QDialog):
         self._apply_gaussian_blur_backdrop()
         self.load_settings()
 
+    def reject(self) -> None:
+        """Restore persisted audio profile on Cancel if live slider adjustments modified it."""
+        if self._media_core and hasattr(self._media_core, "sync_audio_settings"):
+            self._media_core.sync_audio_settings(self._settings_manager)
+        super().reject()
+
+    def _refresh_audio_connection_status(self) -> None:
+        """Refresh CoreAudio volume & Equalizer APO permission status indicators."""
+        if not hasattr(self, "lbl_apo_status"):
+            return
+
+        # 1. CoreAudio Master Volume & Mute indicator
+        if self._media_core and hasattr(self._media_core, "get_volume_state"):
+            vol_state = self._media_core.get_volume_state()
+            vol_pct = getattr(vol_state, "volume_percent", None)
+            vol_supported = getattr(vol_state, "is_supported", None)
+            if vol_supported is True and isinstance(vol_pct, int) and not isinstance(vol_pct, bool):
+                self.lbl_volume_status.setText(
+                    f"● Computer Master Volume & Mute Connected ({vol_pct}%)"
+                )
+                self.lbl_volume_status.setStyleSheet("color: #00FF7F; font-size: 11px; font-weight: bold;")
+            else:
+                self.lbl_volume_status.setText("○ Computer Master Volume Endpoint Unavailable")
+                self.lbl_volume_status.setStyleSheet("color: #E0AF68; font-size: 11px;")
+        else:
+            self.lbl_volume_status.setText("● Windows CoreAudio Master Volume & Mute Ready")
+            self.lbl_volume_status.setStyleSheet("color: #00FF7F; font-size: 11px; font-weight: bold;")
+
+        # 2. System-wide Equalizer APO & Booster status
+        status = self._apo_manager.get_connection_status()
+        if status.get("connected"):
+            self.lbl_apo_status.setText("● System Equalizer & Audio Booster Connected to PC (Live)")
+            self.lbl_apo_status.setStyleSheet("color: #00FF7F; font-size: 11px; font-weight: bold;")
+            self.btn_connect_audio.setText("Reconnect Audio...")
+            self.btn_install_apo.hide()
+        elif status.get("installed"):
+            self.lbl_apo_status.setText("● Equalizer APO Installed — Grant Permission to Connect Live")
+            self.lbl_apo_status.setStyleSheet("color: #E0AF68; font-size: 11px; font-weight: 600;")
+            self.btn_connect_audio.setText("Grant Permission && Connect")
+            self.btn_install_apo.hide()
+        else:
+            self.lbl_apo_status.setText("○ Equalizer APO Not Installed (Visualizer reacts; Speakers need Equalizer APO)")
+            self.lbl_apo_status.setStyleSheet("color: #E0AF68; font-size: 11px;")
+            self.btn_connect_audio.setText("Allow && Connect Audio...")
+            self.btn_install_apo.show()
+
+    def _on_connect_audio_clicked(self) -> None:
+        """Run interactive permission + Windows Equalizer APO installation/configuration flow."""
+        prompt_and_connect_system_audio(
+            settings_manager=self._settings_manager,
+            media_core=self._media_core,
+            apo_manager=self._apo_manager,
+            parent=self,
+        )
+        self._refresh_audio_connection_status()
+
+    def _apply_live_audio_preview(self) -> None:
+        """Push current Audio sliders to AudioAnalyzer and Equalizer APO immediately."""
+        preamp_db = self.sld_preamp.value() / 10.0
+        bass_db = self.sld_bass.value() / 10.0
+        clarity_db = self.sld_clarity.value() / 10.0
+        treble_db = self.sld_treble.value() / 10.0
+        noise_gate = self.sld_noise_gate.value()
+        eq_enabled = self.chk_eq_enabled.isChecked()
+        bands = [s.value() / 10.0 for s in self.eq_band_sliders]
+
+        if self._media_core and hasattr(self._media_core, "_analyzer") and self._media_core._analyzer:
+            self._media_core._analyzer.set_eq_profile(
+                preamp_boost_db=preamp_db,
+                bass_db=bass_db,
+                clarity_db=clarity_db,
+                treble_db=treble_db,
+                eq_bands=bands,
+                noise_gate_percent=noise_gate,
+                eq_enabled=eq_enabled,
+            )
+
+        if self._apo_manager.is_installed():
+            self._apo_manager.apply_eq(
+                preamp_boost_db=preamp_db,
+                bass_db=bass_db,
+                clarity_db=clarity_db,
+                treble_db=treble_db,
+                eq_bands=bands,
+                eq_enabled=eq_enabled,
+            )
+
     def _on_audio_control_changed(self) -> None:
-        """Handle audio slider changes, update labels, and update visualizer live."""
+        """Handle audio slider changes, update labels, and update visualizer/APO live."""
         preamp_db = self.sld_preamp.value() / 10.0
         pct = int(round(math.pow(10.0, preamp_db / 20.0) * 100))
         self.lbl_preamp_val.setText(f"+{preamp_db:.1f} dB ({pct}%)")
@@ -1386,18 +2005,8 @@ class SettingsDialog(QDialog):
         for sld, lbl in zip(self.eq_band_sliders, self.eq_band_labels):
             lbl.setText(f"{sld.value() / 10.0:+.1f}")
 
-        # Update visualizer live if media_core is available
-        if not self._is_updating_ui and self._media_core and hasattr(self._media_core, "_analyzer") and self._media_core._analyzer:
-            bands = [s.value() / 10.0 for s in self.eq_band_sliders]
-            self._media_core._analyzer.set_eq_profile(
-                preamp_boost_db=preamp_db,
-                bass_db=bass_db,
-                clarity_db=clarity_db,
-                treble_db=treble_db,
-                eq_bands=bands,
-                noise_gate_percent=noise_gate,
-                eq_enabled=self.chk_eq_enabled.isChecked(),
-            )
+        if not self._is_updating_ui:
+            self._apply_live_audio_preview()
 
     def _on_band_slider_changed(self) -> None:
         """Handle individual EQ band changes and flag Custom preset."""
@@ -1432,44 +2041,184 @@ class SettingsDialog(QDialog):
         self._on_audio_control_changed()
 
     def _on_appearance_hex_changed(self) -> None:
-        """Update hex swatch previews live while typing."""
+        """Update swatches and dual live notch previews when appearance controls change."""
+        if not self._is_updating_ui:
+            self._update_appearance_preview()
+
+    def _on_bg_mode_changed(self) -> None:
+        """Refresh appearance previews when Background Style selector changes."""
+        if not self._is_updating_ui:
+            self._update_appearance_preview()
+
+    def _on_gradient_preset_changed(self) -> None:
+        """Populate gradient hex colors from selected preset and switch preview into gradient mode."""
+        if self._is_updating_ui:
+            return
+        preset_name = str(self.combo_gradient_preset.currentData() or self.combo_gradient_preset.currentText())
+        if preset_name in GRADIENT_PRESETS:
+            c1, c2, c3 = GRADIENT_PRESETS[preset_name]
+            self._is_updating_ui = True
+            self.txt_grad_color_1.setText(c1)
+            self.txt_grad_color_2.setText(c2)
+            self.txt_grad_color_3.setText(c3)
+            grad_idx = self.combo_bg_mode.findData("gradient")
+            if grad_idx >= 0:
+                self.combo_bg_mode.setCurrentIndex(grad_idx)
+            self._is_updating_ui = False
+        self._update_appearance_preview()
+
+    def _on_gradient_style_changed(self) -> None:
+        """Refresh previews when gradient geometry/direction changes."""
+        if not self._is_updating_ui:
+            grad_idx = self.combo_bg_mode.findData("gradient")
+            if grad_idx >= 0 and self.combo_bg_mode.currentData() != "gradient":
+                self._is_updating_ui = True
+                self.combo_bg_mode.setCurrentIndex(grad_idx)
+                self._is_updating_ui = False
+            self._update_appearance_preview()
+
+    def _on_gradient_hex_edited(self) -> None:
+        """Mark gradient preset as Custom when user manually edits any gradient hex stop."""
+        if self._is_updating_ui:
+            return
+        self._is_updating_ui = True
+        custom_idx = self.combo_gradient_preset.findData("Custom")
+        if custom_idx >= 0:
+            self.combo_gradient_preset.setCurrentIndex(custom_idx)
+        grad_idx = self.combo_bg_mode.findData("gradient")
+        if grad_idx >= 0 and self.combo_bg_mode.currentData() != "gradient":
+            self.combo_bg_mode.setCurrentIndex(grad_idx)
+        self._is_updating_ui = False
+        self._update_appearance_preview()
+
+    def _browse_banner_image(self, target: str) -> None:
+        """Open file picker for expanded or collapsed banner image and switch to image mode."""
+        cur_edit = self.txt_expanded_image_path if target == "expanded" else self.txt_collapsed_image_path
+        start_dir = os.path.dirname(cur_edit.text().strip()) if cur_edit.text().strip() else os.path.expanduser("~")
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Select {'Expanded Card' if target == 'expanded' else 'Collapsed Notch'} Banner Image",
+            start_dir,
+            "Image Files (*.png *.jpg *.jpeg *.webp *.bmp)",
+        )
+        if not path:
+            return
+        cur_edit.setText(os.path.normpath(path))
+        img_idx = self.combo_bg_mode.findData("image")
+        if img_idx >= 0:
+            self.combo_bg_mode.setCurrentIndex(img_idx)
+        self._update_appearance_preview()
+
+    def _copy_expanded_banner_to_collapsed(self) -> None:
+        """Copy Expanded Card banner path into Collapsed Notch banner path."""
+        exp_path = SettingsManager._clean_image_path(self.txt_expanded_image_path.text())
+        self.txt_collapsed_image_path.setText(exp_path)
+        if exp_path:
+            img_idx = self.combo_bg_mode.findData("image")
+            if img_idx >= 0:
+                self.combo_bg_mode.setCurrentIndex(img_idx)
+        self._update_appearance_preview()
+
+    def _clear_banner_image(self, target: str) -> None:
+        """Clear expanded or collapsed custom banner image path."""
+        if target == "expanded":
+            self.txt_expanded_image_path.setText("")
+        else:
+            self.txt_collapsed_image_path.setText("")
+        self._update_appearance_preview()
+
+    def _on_image_dim_changed(self, value: int) -> None:
+        """Update image dim percentage label and preview."""
+        self.lbl_image_dim_val.setText(f"{int(value)}%")
         if not self._is_updating_ui:
             self._update_appearance_preview()
 
     def _reset_appearance_defaults(self) -> None:
-        """Reset appearance hex fields back to #000000 defaults."""
+        """Reset all appearance colors, gradient options, and banner image fields to defaults."""
         self._is_updating_ui = True
+        solid_idx = self.combo_bg_mode.findData("solid")
+        if solid_idx >= 0:
+            self.combo_bg_mode.setCurrentIndex(solid_idx)
         self.txt_bg_color_hex.setText("#000000")
         self.txt_border_color_hex.setText("#000000")
+
+        aurora_idx = self.combo_gradient_preset.findData("Aurora")
+        if aurora_idx >= 0:
+            self.combo_gradient_preset.setCurrentIndex(aurora_idx)
+        diag_idx = self.combo_gradient_style.findData("linear_diag")
+        if diag_idx >= 0:
+            self.combo_gradient_style.setCurrentIndex(diag_idx)
+        c1, c2, c3 = GRADIENT_PRESETS["Aurora"]
+        self.txt_grad_color_1.setText(c1)
+        self.txt_grad_color_2.setText(c2)
+        self.txt_grad_color_3.setText(c3)
+
+        self.txt_expanded_image_path.setText("")
+        self.txt_collapsed_image_path.setText("")
+        align_idx = self.combo_image_alignment.findData("center")
+        if align_idx >= 0:
+            self.combo_image_alignment.setCurrentIndex(align_idx)
+        self.sld_image_dim.setValue(35)
+        self.lbl_image_dim_val.setText("35%")
+
         self.lbl_appearance_error.hide()
         self._is_updating_ui = False
         self._update_appearance_preview()
 
+    @staticmethod
+    def _set_swatch_style(swatch: QFrame, hex_val: Optional[str], fallback: str = "#000000") -> None:
+        """Render square swatch color with subtle red border warning if hex input is invalid."""
+        display_hex = hex_val if hex_val else fallback
+        border = "#3C3C48" if hex_val else "#C1121C"
+        swatch.setStyleSheet(
+            f"background-color: {display_hex}; border-radius: 7px; border: 1px solid {border};"
+        )
+
+    def _current_preview_appearance(self) -> NotchAppearance:
+        """Construct live NotchAppearance snapshot from current SettingsDialog form controls."""
+        bg_hex = parse_hex_color(self.txt_bg_color_hex.text()) or "#000000"
+        border_hex = parse_hex_color(self.txt_border_color_hex.text()) or "#000000"
+        g1_hex = parse_hex_color(self.txt_grad_color_1.text()) or "#071A20"
+        raw_g2 = self.txt_grad_color_2.text().strip()
+        g2_hex = parse_hex_color(raw_g2) if raw_g2 else None
+        g3_hex = parse_hex_color(self.txt_grad_color_3.text()) or "#1B3B6F"
+
+        return NotchAppearance(
+            bg_mode=str(self.combo_bg_mode.currentData() or "solid"),
+            bg_color=QColor(bg_hex),
+            border_color=QColor(border_hex),
+            gradient_preset=str(self.combo_gradient_preset.currentData() or "Custom"),
+            gradient_style=str(self.combo_gradient_style.currentData() or "linear_diag"),
+            gradient_color_1=QColor(g1_hex),
+            gradient_color_2=QColor(g2_hex) if g2_hex else None,
+            gradient_color_3=QColor(g3_hex),
+            collapsed_image_path=SettingsManager._clean_image_path(self.txt_collapsed_image_path.text()),
+            expanded_image_path=SettingsManager._clean_image_path(self.txt_expanded_image_path.text()),
+            image_dim_percent=int(self.sld_image_dim.value()),
+            image_alignment=str(self.combo_image_alignment.currentData() or "center"),
+        )
+
     def _update_appearance_preview(self) -> None:
-        """Refresh color swatches and live notch preview pill from hex fields."""
+        """Refresh all hex swatches and dual Collapsed/Expanded live notch previews."""
         bg_hex = parse_hex_color(self.txt_bg_color_hex.text())
         border_hex = parse_hex_color(self.txt_border_color_hex.text())
+        g1_hex = parse_hex_color(self.txt_grad_color_1.text())
+        raw_g2 = self.txt_grad_color_2.text().strip()
+        g2_hex = parse_hex_color(raw_g2) if raw_g2 else ""
+        g3_hex = parse_hex_color(self.txt_grad_color_3.text())
 
-        bg_display = bg_hex if bg_hex else "#000000"
-        border_display = border_hex if border_hex else "#000000"
+        self._set_swatch_style(self.swatch_bg_preview, bg_hex, "#000000")
+        self._set_swatch_style(self.swatch_border_preview, border_hex, "#000000")
+        self._set_swatch_style(self.swatch_grad_1, g1_hex, "#071A20")
+        if not raw_g2:
+            self.swatch_grad_2.setStyleSheet("background-color: transparent; border-radius: 7px; border: 1px dashed #3C3C48;")
+        else:
+            self._set_swatch_style(self.swatch_grad_2, g2_hex, "#0F5257")
+        self._set_swatch_style(self.swatch_grad_3, g3_hex, "#1B3B6F")
 
-        self.swatch_bg_preview.setStyleSheet(
-            f"background-color: {bg_display}; border-radius: 7px; border: 1px solid {'#3C3C48' if bg_hex else '#C1121C'};"
-        )
-        self.swatch_border_preview.setStyleSheet(
-            f"background-color: {border_display}; border-radius: 7px; border: 1px solid {'#3C3C48' if border_hex else '#C1121C'};"
-        )
-
-        pill_border = border_display if border_display != "#000000" else "#2E2E36"
-        self.appearance_preview_pill.setStyleSheet(
-            f"background-color: {bg_display}; border: 1.5px solid {pill_border}; border-radius: 16px;"
-        )
-        # Contrast hint so light backgrounds keep readable text in preview
-        bg_qcolor = QColor(bg_display)
-        txt_color = "#111115" if bg_qcolor.lightness() > 165 else "#FFFFFF"
-        self.appearance_preview_title.setStyleSheet(
-            f"color: {txt_color}; font-size: 11px; font-weight: 600; background: transparent; border: none;"
-        )
+        appearance = self._current_preview_appearance()
+        self.preview_collapsed_notch.set_appearance(appearance)
+        self.preview_expanded_card.set_appearance(appearance)
 
     def load_settings(self) -> None:
         """Load current preference values from SettingsManager into controls."""
@@ -1508,10 +2257,33 @@ class SettingsDialog(QDialog):
             self._settings_manager.get_hotkey_play_pause()
         )
 
-        # Appearance Hex Colors & Audio Settings
+        # Appearance (Solid, Gradient, Banner Images) & Audio Settings
         self._is_updating_ui = True
+        mode_idx = self.combo_bg_mode.findData(self._settings_manager.get_appearance_bg_mode())
+        if mode_idx >= 0:
+            self.combo_bg_mode.setCurrentIndex(mode_idx)
         self.txt_bg_color_hex.setText(self._settings_manager.get_notch_bg_color())
         self.txt_border_color_hex.setText(self._settings_manager.get_notch_border_color())
+
+        preset_idx = self.combo_gradient_preset.findData(self._settings_manager.get_gradient_preset())
+        self.combo_gradient_preset.setCurrentIndex(preset_idx if preset_idx >= 0 else self.combo_gradient_preset.findData("Custom"))
+        style_idx = self.combo_gradient_style.findData(self._settings_manager.get_gradient_style())
+        if style_idx >= 0:
+            self.combo_gradient_style.setCurrentIndex(style_idx)
+
+        g1, g2, g3 = self._settings_manager.get_gradient_colors()
+        self.txt_grad_color_1.setText(g1)
+        self.txt_grad_color_2.setText(g2)
+        self.txt_grad_color_3.setText(g3)
+
+        self.txt_expanded_image_path.setText(self._settings_manager.get_expanded_image_path())
+        self.txt_collapsed_image_path.setText(self._settings_manager.get_collapsed_image_path())
+        align_idx = self.combo_image_alignment.findData(self._settings_manager.get_image_alignment())
+        if align_idx >= 0:
+            self.combo_image_alignment.setCurrentIndex(align_idx)
+        dim_pct = self._settings_manager.get_image_dim_percent()
+        self.sld_image_dim.setValue(dim_pct)
+        self.lbl_image_dim_val.setText(f"{dim_pct}%")
         self.lbl_appearance_error.hide()
 
         self.chk_eq_enabled.setChecked(self._settings_manager.get_eq_enabled())
@@ -1537,27 +2309,65 @@ class SettingsDialog(QDialog):
 
         self._is_updating_ui = False
         self._update_appearance_preview()
+        self._refresh_audio_connection_status()
         self._on_audio_control_changed()
 
         self.lbl_error.hide()
 
+    def _fail_appearance_validation(self, message: str) -> None:
+        """Display validation error on Appearance page and switch sidebar focus."""
+        self.lbl_appearance_error.setText(message)
+        self.lbl_appearance_error.show()
+        self.sidebar.setCurrentRow(3)
+
     def save_settings(self) -> None:
-        """Validate appearance hex codes & hotkeys, persist values, and apply updates."""
+        """Validate appearance options & hotkeys, persist values, and apply updates."""
         # 1. Validate Appearance hex color inputs
         bg_hex = parse_hex_color(self.txt_bg_color_hex.text())
         border_hex = parse_hex_color(self.txt_border_color_hex.text())
         if bg_hex is None or border_hex is None:
-            self.lbl_appearance_error.setText(
+            self._fail_appearance_validation(
                 "Please enter valid 6-digit hex color codes (e.g. #000000) for Background and Border."
             )
-            self.lbl_appearance_error.show()
-            self.sidebar.setCurrentRow(3)  # Switch to Appearance page
             return
+
+        g1_hex = parse_hex_color(self.txt_grad_color_1.text())
+        raw_g2 = self.txt_grad_color_2.text().strip()
+        g2_hex = parse_hex_color(raw_g2) if raw_g2 else ""
+        g3_hex = parse_hex_color(self.txt_grad_color_3.text())
+        if g1_hex is None or g3_hex is None or (raw_g2 and g2_hex is None):
+            self._fail_appearance_validation(
+                "Please enter valid 6-digit hex color codes for the gradient Start, optional Middle, and End stops."
+            )
+            return
+
+        bg_mode = str(self.combo_bg_mode.currentData() or "solid")
+        exp_img = SettingsManager._clean_image_path(self.txt_expanded_image_path.text())
+        col_img = SettingsManager._clean_image_path(self.txt_collapsed_image_path.text())
+
+        if bg_mode == "image" and not exp_img and not col_img:
+            self._fail_appearance_validation(
+                "Please choose at least one banner image (Expanded or Collapsed) or switch Background Style."
+            )
+            return
+
+        for label, img_path in (("Expanded Card Banner", exp_img), ("Collapsed Notch Banner", col_img)):
+            if img_path:
+                if not os.path.isfile(img_path) or QPixmap(img_path).isNull():
+                    self._fail_appearance_validation(
+                        f"{label} could not be loaded as an image: {img_path}"
+                    )
+                    return
 
         self.lbl_appearance_error.hide()
         self._is_updating_ui = True
         self.txt_bg_color_hex.setText(bg_hex)
         self.txt_border_color_hex.setText(border_hex)
+        self.txt_grad_color_1.setText(g1_hex)
+        self.txt_grad_color_2.setText(g2_hex or "")
+        self.txt_grad_color_3.setText(g3_hex)
+        self.txt_expanded_image_path.setText(exp_img)
+        self.txt_collapsed_image_path.setText(col_img)
         self._is_updating_ui = False
         self._update_appearance_preview()
 
@@ -1587,8 +2397,23 @@ class SettingsDialog(QDialog):
         self._settings_manager.set_hover_intent_delay_ms(
             self.spn_hover_intent.value()
         )
+        invalidate_banner_cache()
+        self._settings_manager.set_appearance_bg_mode(bg_mode)
         self._settings_manager.set_notch_bg_color(bg_hex)
         self._settings_manager.set_notch_border_color(border_hex)
+        self._settings_manager.set_gradient_preset(
+            str(self.combo_gradient_preset.currentData() or "Custom")
+        )
+        self._settings_manager.set_gradient_style(
+            str(self.combo_gradient_style.currentData() or "linear_diag")
+        )
+        self._settings_manager.set_gradient_colors(g1_hex, g2_hex or "", g3_hex)
+        self._settings_manager.set_expanded_image_path(exp_img)
+        self._settings_manager.set_collapsed_image_path(col_img)
+        self._settings_manager.set_image_alignment(
+            str(self.combo_image_alignment.currentData() or "center")
+        )
+        self._settings_manager.set_image_dim_percent(self.sld_image_dim.value())
         self._settings_manager.set_spectrum_mode(
             str(self.combo_spectrum_mode.currentData() or "fft")
         )
