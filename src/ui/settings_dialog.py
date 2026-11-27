@@ -435,6 +435,60 @@ class _AudioSetupWorker(QThread):
         self.finished_result.emit(ok, msg, newly_installed)
 
 
+class _UpdateCheckWorker(QThread):
+    """Background worker that queries GitHub Releases API for latest version without freezing GUI."""
+
+    result_ready = Signal(bool, str, str, str)  # (has_update, latest_tag, release_url, message)
+
+    def __init__(self, current_version: str = "1.0.0", parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._current_version = current_version
+
+    def run(self) -> None:
+        import urllib.request
+        import json
+        import re
+
+        api_url = "https://api.github.com/repos/krishnagarg-2004/Mediadock/releases/latest"
+        try:
+            req = urllib.request.Request(
+                api_url,
+                headers={
+                    "User-Agent": "MediaDock-App",
+                    "Accept": "application/vnd.github.v3+json",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+
+            tag_name = str(data.get("tag_name", "")).strip()
+            html_url = str(data.get("html_url", GITHUB_REPO_URL + "/releases"))
+
+            def parse_ver(v_str: str) -> List[int]:
+                clean = re.sub(r"^[^\d]*", "", v_str)
+                parts = []
+                for p in clean.split("."):
+                    m = re.match(r"^(\d+)", p)
+                    if m:
+                        parts.append(int(m.group(1)))
+                    else:
+                        break
+                return parts
+
+            curr_nums = parse_ver(self._current_version)
+            latest_nums = parse_ver(tag_name)
+
+            has_update = latest_nums > curr_nums
+            if has_update:
+                msg = f"Update {tag_name} is available!"
+            else:
+                msg = f"MediaDock is up to date (v{self._current_version})."
+
+            self.result_ready.emit(has_update, tag_name, html_url, msg)
+        except Exception as e:
+            self.result_ready.emit(False, "", "", f"Could not check for updates: {e}")
+
+
 def prompt_and_connect_system_audio(
     settings_manager: SettingsManager,
     media_core: Optional[Any] = None,
@@ -1740,13 +1794,30 @@ class SettingsDialog(QDialog):
         lbl_about_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()};")
         hdr_about.addWidget(lbl_about_title)
 
-        lbl_ver = QLabel("Version 1.0.0-rc1", card_identity)
+        lbl_ver = QLabel("Version 1.0.0", card_identity)
         lbl_ver.setStyleSheet(
             "background-color: #1A2421; color: #00FF7F; border: 1px solid #264A3B; border-radius: 10px; padding: 3px 10px; font-size: 11px; font-weight: bold;"
         )
         hdr_about.addWidget(lbl_ver)
         hdr_about.addStretch()
         layout_identity.addLayout(hdr_about)
+
+        # Update Checker Row
+        update_row = QHBoxLayout()
+        update_row.setSpacing(10)
+        self.btn_check_update = QPushButton("Check for Updates", card_identity)
+        self.btn_check_update.setFixedHeight(28)
+        self.btn_check_update.setStyleSheet(get_button_stylesheet())
+        self.btn_check_update.clicked.connect(self._check_for_updates)
+
+        self.lbl_update_status = QLabel("", card_identity)
+        self.lbl_update_status.setStyleSheet("color: #A6ADC8; font-size: 11px;")
+        self.lbl_update_status.setOpenExternalLinks(True)
+        self.lbl_update_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+
+        update_row.addWidget(self.btn_check_update)
+        update_row.addWidget(self.lbl_update_status, 1)
+        layout_identity.addLayout(update_row)
 
         lbl_desc = QLabel(
             "Native Windows top-notch Dynamic Island media controller built with Python, PySide6 (Qt), and WinRT GSMTC.\n"
@@ -2129,6 +2200,33 @@ class SettingsDialog(QDialog):
             if img_idx >= 0:
                 self.combo_bg_mode.setCurrentIndex(img_idx)
         self._update_appearance_preview()
+
+    def _check_for_updates(self) -> None:
+        """Trigger background GitHub Release version check."""
+        self.btn_check_update.setEnabled(False)
+        self.lbl_update_status.setText("Checking for updates...")
+        self.lbl_update_status.setStyleSheet("color: #89B4FA; font-size: 11px;")
+
+        self._update_worker = _UpdateCheckWorker(current_version="1.0.0", parent=self)
+        self._update_worker.result_ready.connect(self._on_update_check_result)
+        self._update_worker.start()
+
+    def _on_update_check_result(
+        self, has_update: bool, latest_tag: str, release_url: str, message: str
+    ) -> None:
+        """Handle background update check response."""
+        self.btn_check_update.setEnabled(True)
+        if has_update:
+            self.lbl_update_status.setText(
+                f'<span style="color: #00FF7F; font-weight: bold;">Update {latest_tag} available!</span> '
+                f'<a href="{release_url}" style="color: #00FF7F; text-decoration: underline;">Download</a>'
+            )
+        elif "Could not check" in message:
+            self.lbl_update_status.setText(message)
+            self.lbl_update_status.setStyleSheet("color: #F38BA8; font-size: 11px;")
+        else:
+            self.lbl_update_status.setText(f"✓ {message}")
+            self.lbl_update_status.setStyleSheet("color: #A6E3A1; font-size: 11px;")
 
     def _clear_banner_image(self, target: str) -> None:
         """Clear expanded or collapsed custom banner image path."""

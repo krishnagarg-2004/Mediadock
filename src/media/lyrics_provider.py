@@ -367,3 +367,23 @@ class LyricsProvider:
                     break
 
             return active_text
+
+    def get_synced_lines(self) -> List[LyricsLine]:
+        """Return copy of the full synchronized lyrics timeline for multi-line views."""
+        with self._lock:
+            return list(self._cached_lines)
+
+    def get_current_line_index(self, position_ms: int) -> int:
+        """Return 0-based index of the currently active lyric line, or -1 if before first line."""
+        with self._lock:
+            if not self._cached_lines:
+                return -1
+
+            active_idx = -1
+            for idx, line in enumerate(self._cached_lines):
+                if line.time_ms <= position_ms:
+                    active_idx = idx
+                else:
+                    break
+
+            return active_idx

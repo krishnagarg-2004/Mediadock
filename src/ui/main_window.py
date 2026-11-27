@@ -218,10 +218,8 @@ class MainWindow(FramelessWindow):
         self._apply_always_on_top(self._settings_manager.get_always_on_top())
         self._settings_manager.settings_changed.connect(self._on_setting_changed)
 
-        # Listen for primary screen geometry changes
-        primary_screen = QGuiApplication.primaryScreen()
-        if primary_screen:
-            primary_screen.geometryChanged.connect(lambda _: self.update_top_center_position())
+        # Setup dynamic screen hotplug & geometry listeners (multi-monitor plug/unplug & resolution change)
+        self._setup_screen_listeners()
 
         # Setup UI position interpolation QTimer (250 ms)
         self._position_timer = QTimer(self)
@@ -276,6 +274,10 @@ class MainWindow(FramelessWindow):
 
         old_state = self._state
         self._state = state
+
+        if state != DynamicIslandState.EXPANDED:
+            if hasattr(self, "_lyrics_drawer") and self._lyrics_drawer and self._lyrics_drawer.isVisible():
+                self._lyrics_drawer.hide_drawer()
 
         if state == DynamicIslandState.HIDDEN:
             if self._collapse_timer.isActive():
@@ -637,6 +639,65 @@ class MainWindow(FramelessWindow):
         super().showEvent(event)
         self.update_top_center_position()
 
+    def _setup_screen_listeners(self) -> None:
+        """Connect dynamic screen addition, removal, and geometry change listeners."""
+        app = QGuiApplication.instance()
+        if app:
+            app.screenAdded.connect(self._on_screens_changed)
+            app.screenRemoved.connect(self._on_screens_changed)
+            app.primaryScreenChanged.connect(self._on_screens_changed)
+
+        self._connected_screens = set()
+        self._bind_screen_geometry_listeners()
+
+    def _bind_screen_geometry_listeners(self) -> None:
+        """Attach geometry change listeners to all currently connected display screens."""
+        for screen in QGuiApplication.screens():
+            if screen not in self._connected_screens:
+                screen.geometryChanged.connect(self._on_screen_geometry_changed)
+                screen.availableGeometryChanged.connect(self._on_screen_geometry_changed)
+                self._connected_screens.add(screen)
+
+    def _on_screens_changed(self, *args) -> None:
+        """Handle monitor plug/unplug or primary screen switch."""
+        self._bind_screen_geometry_listeners()
+        self._on_screen_geometry_changed()
+
+    def _on_screen_geometry_changed(self, *args) -> None:
+        """Re-anchor window top-center position when any display geometry changes."""
+        if self._state != DynamicIslandState.HIDDEN:
+            self.update_top_center_position()
+        if hasattr(self, "_lyrics_drawer") and self._lyrics_drawer and self._lyrics_drawer.isVisible():
+            self._lyrics_drawer.show_anchored(self.geometry())
+
+    def _toggle_lyrics_drawer(self) -> None:
+        """Toggle multi-line synchronized lyrics drawer anchored below expanded card."""
+        if not hasattr(self, "_lyrics_drawer") or self._lyrics_drawer is None:
+            from src.ui.lyrics_drawer import LyricsDrawerWidget
+            self._lyrics_drawer = LyricsDrawerWidget()
+            self._lyrics_drawer.seek_requested.connect(self._on_drawer_seek_requested)
+            self._lyrics_drawer.set_accent_color(self._current_accent)
+
+        if self._lyrics_drawer.isVisible():
+            self._lyrics_drawer.hide_drawer()
+        else:
+            lines = self._lyrics_provider.get_synced_lines()
+            track_title = self.title_label.text() if hasattr(self, "title_label") else ""
+            self._lyrics_drawer.set_lyrics(lines, track_title)
+            self._lyrics_drawer.set_accent_color(self._current_accent)
+            self._lyrics_drawer.set_active_position(self._current_position_ms)
+            self._lyrics_drawer.show_anchored(self.geometry())
+
+    def _on_drawer_seek_requested(self, pos_ms: int) -> None:
+        """Seek player when user clicks a lyric line in the drawer."""
+        if self._media_core:
+            self._media_core.seek_to_position(pos_ms)
+        self._current_position_ms = pos_ms
+        self.progress_slider.setValue(pos_ms)
+        self.lbl_position.setText(self._format_time(pos_ms))
+        if hasattr(self, "_lyrics_drawer") and self._lyrics_drawer:
+            self._lyrics_drawer.set_active_position(pos_ms)
+
     @property
     def is_compact_mode(self) -> bool:
         """Deprecated compatibility property. Return True if Dynamic Island is in COLLAPSED state."""
@@ -716,6 +777,8 @@ class MainWindow(FramelessWindow):
 
         if hasattr(self, "_capsule_widget"):
             self._capsule_widget.set_appearance(self._appearance)
+        if hasattr(self, "_lyrics_drawer") and self._lyrics_drawer:
+            self._lyrics_drawer.set_accent_color(self._current_accent)
         self._update_media_tile_style()
         self.update()
 
@@ -874,6 +937,9 @@ class MainWindow(FramelessWindow):
         self.lyrics_label.setWordWrap(True)
         self.lyrics_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lyrics_label.setFixedHeight(32)
+        self.lyrics_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.lyrics_label.setToolTip("Click to view full synchronized lyrics drawer")
+        self.lyrics_label.mousePressEvent = lambda e: self._toggle_lyrics_drawer() if e.button() == Qt.MouseButton.LeftButton else None
         self._apply_lyrics_style(self._current_accent)
         self.lyrics_label.hide()
 
@@ -1229,6 +1295,9 @@ class MainWindow(FramelessWindow):
         if was_hidden != self.lyrics_label.isHidden():
             self._sync_expanded_geometry()
 
+        if hasattr(self, "_lyrics_drawer") and self._lyrics_drawer and self._lyrics_drawer.isVisible():
+            self._lyrics_drawer.set_active_position(current_pos_ms)
+
     def _on_lyrics_loaded(self, track_key: str, has_lyrics: bool) -> None:
         """Qt slot invoked on main GUI thread when lyrics finish fetching."""
         if not self._settings_manager.get_lyrics_enabled():
@@ -1258,6 +1327,12 @@ class MainWindow(FramelessWindow):
 
         if was_hidden != self.lyrics_label.isHidden():
             self._sync_expanded_geometry()
+
+        if hasattr(self, "_lyrics_drawer") and self._lyrics_drawer and self._lyrics_drawer.isVisible():
+            lines = self._lyrics_provider.get_synced_lines()
+            self._lyrics_drawer.set_lyrics(lines, cur_title)
+            if has_lyrics:
+                self._lyrics_drawer.set_active_position(current_pos_ms)
 
     # --- Qt Signal Slots ---
 
@@ -1304,6 +1379,8 @@ class MainWindow(FramelessWindow):
             self.lyrics_label.clear()
             self.lyrics_label.hide()
             self._sync_expanded_geometry()
+            if hasattr(self, "_lyrics_drawer") and self._lyrics_drawer and self._lyrics_drawer.isVisible():
+                self._lyrics_drawer.set_lyrics([], str(track.title or ""))
 
         # Trigger synchronized lyrics fetch
         if self._settings_manager.get_lyrics_enabled() and track and track.title:
@@ -1316,6 +1393,8 @@ class MainWindow(FramelessWindow):
         self._capsule_widget.set_accent_color(self._current_accent)
         self._visualizer.set_bar_color(self._current_accent)
         self._apply_lyrics_style(self._current_accent)
+        if hasattr(self, "_lyrics_drawer") and self._lyrics_drawer:
+            self._lyrics_drawer.set_accent_color(self._current_accent)
         self.on_playback_modes_changed(self._shuffle_active, self._repeat_mode)
         self.update()
 

@@ -70,6 +70,42 @@ def verify_executable_output() -> None:
     print("--------------------------------\n")
 
 
+def compile_inno_setup_installer() -> None:
+    """Compile Inno Setup Windows installer if ISCC.exe is available."""
+    iss_file = os.path.join(PROJECT_ROOT, "installer", "installer.iss")
+    if not os.path.exists(iss_file):
+        return
+
+    # Look for Inno Setup compiler in PATH or standard installation directory
+    iscc_path = shutil.which("ISCC.exe") or shutil.which("iscc")
+    if not iscc_path:
+        default_paths = [
+            os.path.expandvars(r"%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"),
+            os.path.expandvars(r"%ProgramFiles%\Inno Setup 6\ISCC.exe"),
+            os.path.expandvars(r"%LocalAppData%\Programs\Inno Setup 6\ISCC.exe"),
+        ]
+        for p in default_paths:
+            if os.path.isfile(p):
+                iscc_path = p
+                break
+
+    if not iscc_path:
+        print("NOTE: Inno Setup (ISCC.exe) not found; skipping MediaDock-Setup.exe installer generation.")
+        print("      (To build the installer, install Inno Setup 6 from https://jrsoftware.org/isdl.php)\n")
+        return
+
+    print("--- Compiling Windows Installer with Inno Setup ---")
+    cmd = [iscc_path, iss_file]
+    result = subprocess.run(cmd, cwd=os.path.dirname(iss_file))
+    if result.returncode == 0:
+        setup_exe = os.path.join(DIST_DIR, "MediaDock-Setup.exe")
+        if os.path.exists(setup_exe):
+            size_mb = os.path.getsize(setup_exe) / (1024 * 1024)
+            print(f"SUCCESS: Installer generated at {setup_exe} ({size_mb:.2f} MB)\n")
+    else:
+        print(f"WARNING: Inno Setup compilation exited with code {result.returncode}\n")
+
+
 def main() -> None:
     """Main build entry point."""
     print("==========================================")
@@ -78,6 +114,7 @@ def main() -> None:
     clean_stale_build_output()
     run_pyinstaller_build()
     verify_executable_output()
+    compile_inno_setup_installer()
 
 
 if __name__ == "__main__":
