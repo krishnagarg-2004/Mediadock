@@ -230,7 +230,7 @@ class WindowsVolumeProvider(BaseVolumeProvider):
                     if sig != self._last_polled_state:
                         self._last_polled_state = sig
                         self._notify_volume_changed()
-                self._stop_event.wait(0.45)
+                self._stop_event.wait(0.18)
         finally:
             if ole32 is not None:
                 try:
@@ -257,12 +257,12 @@ class WindowsVolumeProvider(BaseVolumeProvider):
             vol_scalar = c_float()
             hr_vol = get_vol(endpoint, byref(vol_scalar))
 
-            # GetMute (vtable index 14)
-            get_mute = WINFUNCTYPE(HRESULT, c_void_p, POINTER(BOOL))(vtbl_vol[14])
-            muted = BOOL()
+            # GetMute (vtable index 15)
+            get_mute = WINFUNCTYPE(HRESULT, c_void_p, POINTER(BOOL))(vtbl_vol[15])
+            muted = BOOL(0)
             hr_mute = get_mute(endpoint, byref(muted))
 
-            if hr_vol == 0 and hr_mute == 0:
+            if hr_vol >= 0 and hr_mute >= 0:
                 percent = max(0, min(100, int(round(vol_scalar.value * 100.0))))
                 return VolumeState(volume_percent=percent, is_muted=bool(muted.value), is_supported=True)
         except Exception as e:
@@ -302,7 +302,7 @@ class WindowsVolumeProvider(BaseVolumeProvider):
             set_vol = WINFUNCTYPE(HRESULT, c_void_p, c_float, c_void_p)(vtbl_vol[7])
             scalar = c_float(clamped / 100.0)
             hr = set_vol(endpoint, scalar, _byref(zero_guid))
-            if hr == 0:
+            if hr >= 0:
                 self._notify_volume_changed()
                 return True
         except Exception as e:
@@ -324,7 +324,7 @@ class WindowsVolumeProvider(BaseVolumeProvider):
 
             vtbl_vol = cast(endpoint, POINTER(POINTER(c_void_p))).contents
 
-            # SetMute (vtable index 13)
+            # SetMute (vtable index 14)
             # Pass a zero-GUID as event context so Windows shows the OSD overlay animation.
             import ctypes
             from ctypes import Structure, c_ulong, c_ushort, c_ubyte, byref as _byref2
@@ -338,9 +338,9 @@ class WindowsVolumeProvider(BaseVolumeProvider):
                 ]
 
             zero_guid2 = _GUID2()
-            set_mute_func = WINFUNCTYPE(HRESULT, c_void_p, BOOL, c_void_p)(vtbl_vol[13])
+            set_mute_func = WINFUNCTYPE(HRESULT, c_void_p, BOOL, c_void_p)(vtbl_vol[14])
             hr = set_mute_func(endpoint, BOOL(muted), _byref2(zero_guid2))
-            if hr == 0:
+            if hr >= 0:
                 self._notify_volume_changed()
                 return True
         except Exception as e:

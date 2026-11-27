@@ -1273,6 +1273,7 @@ class SettingsDialog(QDialog):
         layout_colors.addWidget(self.lbl_appearance_error)
 
         app_actions_row = QHBoxLayout()
+        app_actions_row.setContentsMargins(0, 10, 0, 0)
         app_actions_row.addStretch()
         self.btn_reset_appearance = QPushButton("Reset", card_colors)
         self.btn_reset_appearance.setFixedHeight(30)
@@ -1646,6 +1647,7 @@ class SettingsDialog(QDialog):
         eq_box, eq_l = self._create_setting_card(page_aud, "5-Band Equalizer")
 
         eq_hdr = QHBoxLayout()
+        eq_hdr.setSpacing(10)
         lbl_eq_sub = QLabel("Preset Profile", eq_box)
         lbl_eq_sub.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px;")
         eq_hdr.addWidget(lbl_eq_sub)
@@ -1657,7 +1659,7 @@ class SettingsDialog(QDialog):
         self.cmb_preset.currentTextChanged.connect(self._on_preset_changed)
         eq_hdr.addWidget(self.cmb_preset)
 
-        self.btn_reset_eq = QPushButton("Reset Flat", eq_box)
+        self.btn_reset_eq = QPushButton("Reset", eq_box)
         self.btn_reset_eq.setFixedHeight(30)
         self.btn_reset_eq.setStyleSheet(get_button_stylesheet())
         self.btn_reset_eq.clicked.connect(self._reset_eq_flat)

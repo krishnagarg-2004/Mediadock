@@ -880,7 +880,7 @@ class MainWindow(FramelessWindow):
         # DeskNotch Transport Controls Row
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(0, 2, 0, 0)
-        controls_layout.setSpacing(4)
+        controls_layout.setSpacing(5)
         controls_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         icon_btn_qss = get_desknotch_icon_button_stylesheet()
@@ -942,10 +942,14 @@ class MainWindow(FramelessWindow):
         self.slider_volume.valueChanged.connect(self._on_volume_slider_changed)
 
         controls_layout.addWidget(self.btn_prev)
+        controls_layout.addSpacing(4)
         controls_layout.addWidget(self.btn_play_pause)
+        controls_layout.addSpacing(4)
         controls_layout.addWidget(self.btn_next)
+        controls_layout.addSpacing(6)
         controls_layout.addWidget(self.btn_shuffle)
         controls_layout.addWidget(self.btn_repeat)
+        controls_layout.addSpacing(4)
         controls_layout.addWidget(self.btn_mute)
         controls_layout.addWidget(self.slider_volume)
 

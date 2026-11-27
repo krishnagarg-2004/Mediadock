@@ -137,7 +137,7 @@ class TestVolumeSystem(unittest.TestCase):
 
         with patch.object(provider, "_notify_volume_changed") as mock_notify:
             with patch("ctypes.cast") as mock_cast:
-                mock_vtbl = [MagicMock() for _ in range(15)]
+                mock_vtbl = [MagicMock() for _ in range(20)]
                 mock_cast.return_value.contents = mock_vtbl
 
                 # Mock set_vol (vtable 7) return HR = 0
@@ -149,6 +149,12 @@ class TestVolumeSystem(unittest.TestCase):
                     self.assertTrue(provider.set_volume(150))
                     # Test intermediate value 65%
                     self.assertTrue(provider.set_volume(65))
+
+                # Mock set_mute (vtable 14) return HR = 0
+                mock_set_mute = MagicMock(return_value=0)
+                with patch("ctypes.WINFUNCTYPE", return_value=lambda func: mock_set_mute):
+                    self.assertTrue(provider.set_mute(True))
+                    self.assertTrue(provider.set_mute(False))
 
     def test_media_core_volume_delegation_and_signals(self) -> None:
         """Verify MediaCore exposes volume methods and emits volume_changed signals."""
