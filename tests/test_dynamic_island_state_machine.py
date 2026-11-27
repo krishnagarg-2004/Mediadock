@@ -1,10 +1,12 @@
 """Unit tests for Dynamic Island State Machine & Hover Integration (Step 9.1.4)."""
 
+import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-from PySide6.QtCore import Qt, QPointF, QEvent
+from PySide6.QtCore import Qt, QPointF, QEvent, QSettings
 from PySide6.QtGui import QEnterEvent, QEventPoint
 from PySide6.QtWidgets import QApplication
 
@@ -12,7 +14,15 @@ from src.core.models import TrackInfo, PlaybackStatus, VolumeState
 from src.core.settings import SettingsManager
 from src.media.base_provider import BaseMediaProvider
 from src.core.media_core import MediaCore
-from src.ui.main_window import MainWindow, DynamicIslandState, TOP_OFFSET_PX, COLLAPSED_SIZE, EXPANDED_SIZE
+from src.ui.main_window import (
+    MainWindow,
+    DynamicIslandState,
+    TOP_OFFSET_PX,
+    COLLAPSED_TOP_OFFSET_PX,
+    EXPANDED_TOP_OFFSET_PX,
+    COLLAPSED_SIZE,
+    EXPANDED_SIZE,
+)
 
 
 class MockMediaProvider(BaseMediaProvider):
@@ -79,12 +89,22 @@ class TestDynamicIslandStateMachine(unittest.TestCase):
             cls.app = QApplication(sys.argv)
 
     def setUp(self) -> None:
-        """Set up clean SettingsManager, MediaCore, and MainWindow before each test."""
-        self.settings = SettingsManager()
-        self.settings.clear()
+        """Set up clean isolated SettingsManager, MediaCore, and MainWindow before each test."""
+        self.tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".ini")
+        self.tmp_file.close()
+        self.qs = QSettings(self.tmp_file.name, QSettings.Format.IniFormat)
+        self.settings = SettingsManager(qsettings=self.qs)
         self.provider = MockMediaProvider(session_available=False)
         self.media_core = MediaCore(provider=self.provider)
         self.window = MainWindow(media_core=self.media_core, settings_manager=self.settings)
+
+    def tearDown(self) -> None:
+        """Clean up temporary INI file after each test."""
+        if hasattr(self, "tmp_file") and os.path.exists(self.tmp_file.name):
+            try:
+                os.unlink(self.tmp_file.name)
+            except OSError:
+                pass
 
     # 1. Initial HIDDEN state when no media exists
     def test_initial_hidden_state_when_no_media_exists(self) -> None:
@@ -220,12 +240,20 @@ class TestDynamicIslandStateMachine(unittest.TestCase):
 
     # 14. State transitions preserve top-center geometry
     def test_state_transitions_preserve_top_center_geometry(self) -> None:
-        """Verify both COLLAPSED and EXPANDED states maintain top-center y-coordinate position."""
+        """Verify COLLAPSED notch anchors at COLLAPSED_TOP_OFFSET_PX and EXPANDED oval sits at EXPANDED_TOP_OFFSET_PX."""
+        from PySide6.QtCore import QEventLoop, QTimer
+
         self.window.set_state(DynamicIslandState.COLLAPSED)
-        self.assertEqual(self.window.pos().y(), TOP_OFFSET_PX)
+        self.assertEqual(self.window.pos().y(), COLLAPSED_TOP_OFFSET_PX)
 
         self.window.set_state(DynamicIslandState.EXPANDED)
-        self.assertEqual(self.window.pos().y(), TOP_OFFSET_PX)
+        if self.window._geom_anim.state() == self.window._geom_anim.State.Running:
+            loop = QEventLoop()
+            self.window._geom_anim.finished.connect(loop.quit)
+            QTimer.singleShot(500, loop.quit)
+            loop.exec()
+        self.app.processEvents()
+        self.assertEqual(self.window.pos().y(), EXPANDED_TOP_OFFSET_PX)
 
     # 15. Existing media controls remain functional
     def test_existing_media_controls_functional(self) -> None:

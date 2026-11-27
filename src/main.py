@@ -1,11 +1,21 @@
 """Application entry point for MediaDock."""
 
+import os
 import sys
 from typing import Optional
+
+# Ensure project root is importable when launched directly at Windows startup
+if not getattr(sys, "frozen", False):
+    _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _project_root not in sys.path:
+        sys.path.insert(0, _project_root)
+
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from src.core.settings import SettingsManager
 from src.core.single_instance import SingleInstanceGuard
+from src.utils.autostart import AutostartManager
 from src.media.gsmtc_provider import GSMTCProvider
 from src.core.media_core import MediaCore
 from src.ui.main_window import MainWindow
@@ -16,6 +26,18 @@ from src.ui.hotkeys import GlobalHotkeyManager
 
 def main() -> int:
     """Initialize QApplication, SettingsManager, SystemTrayIcon, MainWindow, GlobalHotkeyManager, and start event loop."""
+    # Normalize working directory so Windows login launches (defaulting to System32) resolve app paths reliably
+    app_dir = (
+        os.path.dirname(os.path.abspath(sys.executable))
+        if getattr(sys, "frozen", False)
+        else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
+    try:
+        if os.path.isdir(app_dir):
+            os.chdir(app_dir)
+    except OSError:
+        pass
+
     app = QApplication(sys.argv)
     app.setApplicationName("MediaDock")
     app.setOrganizationName("KrishnaOS")
@@ -31,6 +53,9 @@ def main() -> int:
 
     # Instantiate settings, media infrastructure, application coordinator, and hotkey manager
     settings_manager = SettingsManager()
+    # Keep Windows HKCU Run registry key synced when Start with Windows is enabled
+    AutostartManager.reconcile(settings_manager.get_autostart_windows())
+
     provider = GSMTCProvider()
     media_core = MediaCore(provider=provider, settings_manager=settings_manager)
     hotkey_manager = GlobalHotkeyManager()
@@ -39,6 +64,14 @@ def main() -> int:
     window = MainWindow(media_core=media_core, settings_manager=settings_manager)
     tray_icon = SystemTrayIcon(media_core=media_core)
     tray_icon.show()
+
+    # Retry tray registration shortly after startup if Windows Explorer's taskbar is still initializing
+    def _ensure_tray_visible() -> None:
+        if not tray_icon.isVisible():
+            tray_icon.show()
+
+    QTimer.singleShot(2000, _ensure_tray_visible)
+    QTimer.singleShot(6000, _ensure_tray_visible)
 
     # Settings dialog single-instance reference
     settings_dialog: Optional[SettingsDialog] = None

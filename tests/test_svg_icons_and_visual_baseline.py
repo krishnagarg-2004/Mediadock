@@ -1,17 +1,18 @@
 """Unit tests for Phase 9.2.2 SVG Icon Architecture and Pure Black Visual Baseline."""
 
+import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSettings
 from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from src.core.models import TrackInfo, PlaybackStatus, MediaSessionInfo
+from src.core.settings import SettingsManager
 from src.ui.theme import (
     COLOR_BG_ISLAND,
-    COLOR_STATUS_ACTIVE,
-    COLOR_STATUS_INACTIVE,
     get_svg_pixmap,
     get_svg_icon,
 )
@@ -76,23 +77,24 @@ class TestSvgIconsAndVisualBaseline(unittest.TestCase):
         self.assertEqual(capsule.width(), 220)
         self.assertEqual(capsule.height(), 34)
 
-    def test_capsule_status_dot_colors(self) -> None:
-        """Verify status dot sets GREEN (#00FF7F) for PLAYING and RED (#C1121C) for INACTIVE."""
+    def test_capsule_activity_dot_removed_and_pulse_updates(self) -> None:
+        """Verify collapsed notch omits status_dot and forwards playback state to 3-bar pulse visualizer."""
         capsule = CollapsedCapsuleWidget()
+        self.assertFalse(hasattr(capsule, "status_dot"))
 
-        # PLAYING -> GREEN
+        # PLAYING activates miniature pulse indicator
         capsule.set_playback_status(PlaybackStatus.PLAYING)
-        self.assertIn("#00ff7f", capsule.status_dot.styleSheet().lower())
+        self.assertTrue(capsule.pulse_bars._is_playing)
 
-        # PAUSED / STOPPED / CLOSED -> RED
+        # PAUSED / STOPPED / CLOSED deactivate miniature pulse indicator
         capsule.set_playback_status(PlaybackStatus.PAUSED)
-        self.assertIn("#c1121c", capsule.status_dot.styleSheet().lower())
+        self.assertFalse(capsule.pulse_bars._is_playing)
 
         capsule.set_playback_status(PlaybackStatus.STOPPED)
-        self.assertIn("#c1121c", capsule.status_dot.styleSheet().lower())
+        self.assertFalse(capsule.pulse_bars._is_playing)
 
         capsule.set_playback_status(PlaybackStatus.CLOSED)
-        self.assertIn("#c1121c", capsule.status_dot.styleSheet().lower())
+        self.assertFalse(capsule.pulse_bars._is_playing)
 
     def test_capsule_source_aware_formatting(self) -> None:
         """Verify capsule displays source-aware text formatting for Spotify, YouTube, and VLC."""
@@ -111,14 +113,22 @@ class TestSvgIconsAndVisualBaseline(unittest.TestCase):
         self.assertEqual(capsule.title_label.full_text(), "Movie.mkv")
 
     def test_expanded_pure_black_background(self) -> None:
-        """Verify MainWindow / FramelessWindow background is pure black #000000 and 380x174 px DeskNotch size when expanded."""
-        window = MainWindow()
-        window.set_state(window.DynamicIslandState.EXPANDED if hasattr(window, "DynamicIslandState") else None)
-        from src.ui.main_window import DynamicIslandState
-        window.set_state(DynamicIslandState.EXPANDED)
-        self.assertEqual(window._bg_color.name(), "#000000")
-        self.assertEqual(window.width(), 380)
-        self.assertEqual(window.height(), 174)
+        """Verify MainWindow / FramelessWindow default background is pure black #000000 and EXPANDED_SIZE when expanded."""
+        from src.ui.main_window import DynamicIslandState, EXPANDED_SIZE
+
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".ini")
+        tmp_file.close()
+        try:
+            qs = QSettings(tmp_file.name, QSettings.Format.IniFormat)
+            isolated_settings = SettingsManager(qsettings=qs)
+            window = MainWindow(settings_manager=isolated_settings)
+            window.set_state(DynamicIslandState.EXPANDED, animate=False)
+            self.assertEqual(window._bg_color.name(), "#000000")
+            self.assertEqual(window.width(), EXPANDED_SIZE[0])
+            self.assertEqual(window.height(), EXPANDED_SIZE[1])
+        finally:
+            if os.path.exists(tmp_file.name):
+                os.unlink(tmp_file.name)
 
     def test_media_controls_functional_with_svg_icons(self) -> None:
         """Verify transport control buttons have valid SVG icons attached and fire click slots."""

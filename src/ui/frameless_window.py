@@ -150,17 +150,19 @@ class FramelessWindow(QWidget):
             super().mouseReleaseEvent(event)
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        """Paint anti-aliased DeskNotch obsidian glass shell with top flared ears and edge light-catch."""
+        """Paint anti-aliased rounded capsule/oval glass shell with edge light-catch."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        rect = QRectF(self.rect()).adjusted(0.5, 0.0, -0.5, -0.5)
-        path = build_desknotch_path(rect, bottom_radius=self._border_radius, ear_radius=self._ear_radius)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = min(float(self._border_radius), rect.width() / 2.0, rect.height() / 2.0)
+        path = QPainterPath()
+        path.addRoundedRect(rect, radius, radius)
 
         # Obsidian black hardware shell base
         painter.fillPath(path, self._bg_color)
 
-        # DeskNotch layered translucent frost sheen (lighter at top edge)
+        # Layered translucent frost sheen (lighter at top edge)
         sheen = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
         sheen.setColorAt(0.0, QColor(255, 255, 255, 14))
         sheen.setColorAt(0.45, QColor(255, 255, 255, 5))

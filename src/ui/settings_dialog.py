@@ -1,13 +1,16 @@
+import ctypes
 import math
-from typing import Optional, Any, Dict, List
-from PySide6.QtCore import Qt, Signal, QUrl
-from PySide6.QtGui import QFont, QKeyEvent, QColor, QDesktopServices
+import sys
+from typing import Optional, Any, Dict, List, Tuple
+from PySide6.QtCore import Qt, Signal, QUrl, __version__ as QT_RUNTIME_VERSION
+from PySide6.QtGui import QFont, QKeyEvent, QColor, QDesktopServices, QGuiApplication, QPainter
 from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
     QHBoxLayout,
     QCheckBox,
     QLabel,
+    QLineEdit,
     QPushButton,
     QWidget,
     QFrame,
@@ -20,7 +23,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
 )
 
-from src.core.settings import SettingsManager
+from src.core.settings import SettingsManager, parse_hex_color
 from src.media.equalizer_apo import EqualizerAPOManager, EQUALIZER_APO_DOWNLOAD_URL
 from src.ui.theme import (
     COLOR_BG_BASE,
@@ -33,6 +36,9 @@ from src.ui.theme import (
     COLOR_ACCENT_GREEN,
     get_button_stylesheet,
 )
+
+GITHUB_REPO_URL = "https://github.com/krishnagarg-2004/Mediadock"
+GITHUB_ISSUES_URL = "https://github.com/krishnagarg-2004/Mediadock/issues"
 
 EQ_PRESETS: Dict[str, List[float]] = {
     "Flat": [0.0, 0.0, 0.0, 0.0, 0.0],
@@ -361,7 +367,7 @@ class CollapseDelaySpinBox(QSpinBox):
 
 
 class SettingsDialog(QDialog):
-    """Landscape Preferences dialog with persistent left navigation sidebar and QStackedWidget page architecture."""
+    """Spacious frosted Gaussian-blur landscape Preferences dialog with card-based scrollable pages."""
 
     def __init__(
         self,
@@ -376,57 +382,336 @@ class SettingsDialog(QDialog):
         self._media_core = media_core
         self._apo_manager = EqualizerAPOManager()
         self._is_updating_ui = False
+        self._blur_backdrop_mode: str = "none"
 
         self.setWindowTitle("MediaDock Preferences")
-        self.setFixedSize(680, 440)
+        self.setMinimumSize(780, 560)
+        self.resize(820, 600)
+        self.setSizeGripEnabled(True)
         self.setWindowFlags(
             Qt.WindowType.Dialog
             | Qt.WindowType.WindowTitleHint
             | Qt.WindowType.WindowCloseButtonHint
             | Qt.WindowType.WindowStaysOnTopHint
         )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
         self._init_ui()
+        self._apply_gaussian_blur_backdrop()
         self.load_settings()
 
+    def _apply_gaussian_blur_backdrop(self) -> None:
+        """Enable hardware Windows Gaussian Blur (Win11 Acrylic backdrop with Win10 composition fallback)."""
+        if sys.platform != "win32":
+            self._blur_backdrop_mode = "translucent"
+            return
+
+        try:
+            hwnd = int(self.winId())
+            dwmapi = ctypes.windll.dwmapi
+
+            # Enable dark window frame & rounded corners
+            dark_mode = ctypes.c_int(1)
+            dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark_mode), ctypes.sizeof(dark_mode))
+            corner_pref = ctypes.c_int(2)  # DWMWCP_ROUND
+            dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(corner_pref), ctypes.sizeof(corner_pref))
+
+            class _MARGINS(ctypes.Structure):
+                _fields_ = [
+                    ("cxLeftWidth", ctypes.c_int),
+                    ("cxRightWidth", ctypes.c_int),
+                    ("cyTopHeight", ctypes.c_int),
+                    ("cyBottomHeight", ctypes.c_int),
+                ]
+
+            margins = _MARGINS(-1, -1, -1, -1)
+            dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
+
+            # Windows 11 22H2+ native Acrylic Gaussian Blur (DWMSBT_TRANSIENTWINDOW = 3)
+            backdrop_type = ctypes.c_int(3)
+            hr = dwmapi.DwmSetWindowAttribute(hwnd, 38, ctypes.byref(backdrop_type), ctypes.sizeof(backdrop_type))
+            if hr == 0:
+                self._blur_backdrop_mode = "dwm_acrylic"
+                return
+
+            # Fallback for older Windows 10/11 builds via SetWindowCompositionAttribute
+            class _ACCENT_POLICY(ctypes.Structure):
+                _fields_ = [
+                    ("AccentState", ctypes.c_int),
+                    ("AccentFlags", ctypes.c_int),
+                    ("GradientColor", ctypes.c_uint),
+                    ("AnimationId", ctypes.c_int),
+                ]
+
+            class _WINCOMPATTRDATA(ctypes.Structure):
+                _fields_ = [
+                    ("Attribute", ctypes.c_int),
+                    ("Data", ctypes.POINTER(_ACCENT_POLICY)),
+                    ("SizeOfData", ctypes.c_size_t),
+                ]
+
+            policy = _ACCENT_POLICY(4, 2, 0x99101015, 0)  # ACCENT_ENABLE_ACRYLICBLURBEHIND
+            comp_data = _WINCOMPATTRDATA(19, ctypes.pointer(policy), ctypes.sizeof(policy))
+            res = ctypes.windll.user32.SetWindowCompositionAttribute(hwnd, ctypes.byref(comp_data))
+            if res:
+                self._blur_backdrop_mode = "composition_acrylic"
+        except Exception:
+            self._blur_backdrop_mode = "translucent"
+
+    def paintEvent(self, event) -> None:
+        """Paint translucent dark frosted glass veil so DWM Gaussian blur composites cleanly."""
+        painter = QPainter(self)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        painter.fillRect(self.rect(), QColor(12, 12, 16, 152))
+        painter.end()
+
+    def _create_scrollable_page(self, title: str, subtitle: str) -> Tuple[QWidget, QVBoxLayout]:
+        """Build a standardized settings page with fixed header and spacious scrollable body."""
+        page = QWidget(self.stacked_widget)
+        page.setStyleSheet("background: transparent;")
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(10)
+
+        header = QWidget(page)
+        header.setStyleSheet("background: transparent;")
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(2, 0, 2, 0)
+        header_layout.setSpacing(3)
+
+        lbl_title = QLabel(title, header)
+        lbl_title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        lbl_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()};")
+        header_layout.addWidget(lbl_title)
+
+        lbl_sub = QLabel(subtitle, header)
+        lbl_sub.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px;")
+        lbl_sub.setWordWrap(True)
+        header_layout.addWidget(lbl_sub)
+
+        page_layout.addWidget(header)
+
+        divider = QFrame(page)
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setFixedHeight(1)
+        divider.setStyleSheet("background-color: rgba(255, 255, 255, 0.10); border: none;")
+        page_layout.addWidget(divider)
+
+        scroll = QScrollArea(page)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        scroll.viewport().setStyleSheet("background: transparent;")
+        scroll.viewport().setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        content_layout = QVBoxLayout(container)
+        content_layout.setContentsMargins(2, 4, 12, 12)
+        content_layout.setSpacing(12)
+
+        scroll.setWidget(container)
+        page_layout.addWidget(scroll, 1)
+        return page, content_layout
+
+    def _create_setting_card(
+        self, parent: QWidget, section_title: Optional[str] = None
+    ) -> Tuple[QFrame, QVBoxLayout]:
+        """Create a rounded container card so individual options never compete for space."""
+        card = QFrame(parent)
+        card.setObjectName("SettingCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(16, 14, 16, 14)
+        card_layout.setSpacing(12)
+
+        if section_title:
+            lbl_sec = QLabel(section_title, card)
+            lbl_sec.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+            lbl_sec.setStyleSheet("color: #D4D4DC; letter-spacing: 0.4px;")
+            card_layout.addWidget(lbl_sec)
+
+        return card, card_layout
+
+    def _add_toggle_block(
+        self, card_layout: QVBoxLayout, checkbox: QCheckBox, description: str
+    ) -> QLabel:
+        """Add a comfortably spaced checkbox row with wrapped subtitle text below it."""
+        block = QWidget()
+        block_l = QVBoxLayout(block)
+        block_l.setContentsMargins(0, 2, 0, 2)
+        block_l.setSpacing(3)
+
+        checkbox.setMinimumHeight(24)
+        block_l.addWidget(checkbox)
+
+        lbl_desc = QLabel(description, block)
+        lbl_desc.setStyleSheet(
+            f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 26px;"
+        )
+        lbl_desc.setWordWrap(True)
+        block_l.addWidget(lbl_desc)
+
+        card_layout.addWidget(block)
+        return lbl_desc
+
+    def _add_control_row(
+        self,
+        card_layout: QVBoxLayout,
+        title: str,
+        control: QWidget,
+        description: str = "",
+        extra_controls: Optional[List[QWidget]] = None,
+    ) -> None:
+        """Place label/subtitle on the left and fixed control(s) cleanly on the right."""
+        row_widget = QWidget()
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 2, 0, 2)
+        row_layout.setSpacing(16)
+
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setSpacing(3)
+
+        lbl_title = QLabel(title, row_widget)
+        lbl_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()}; font-size: 12px; font-weight: 600;")
+        text_col.addWidget(lbl_title)
+
+        if description:
+            lbl_desc = QLabel(description, row_widget)
+            lbl_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px;")
+            lbl_desc.setWordWrap(True)
+            text_col.addWidget(lbl_desc)
+
+        row_layout.addLayout(text_col, 1)
+
+        ctrl_container = QHBoxLayout()
+        ctrl_container.setContentsMargins(0, 0, 0, 0)
+        ctrl_container.setSpacing(8)
+        if extra_controls:
+            for extra in extra_controls:
+                ctrl_container.addWidget(extra, 0, Qt.AlignmentFlag.AlignVCenter)
+        ctrl_container.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        row_layout.addLayout(ctrl_container)
+        card_layout.addWidget(row_widget)
+
     def _init_ui(self) -> None:
-        """Initialize landscape sidebar and stacked pages layout."""
-        self.setStyleSheet(f"QDialog {{ background-color: {COLOR_BG_BASE.name()}; }}")
+        """Initialize translucent frosted-glass sidebar navigation, cards, and dialog controls."""
+        self.setStyleSheet(
+            f"QDialog {{ background-color: transparent; color: {COLOR_TEXT_PRIMARY.name()}; }}"
+            "QStackedWidget, QLabel { background-color: transparent; }"
+            "QFrame#SettingCard {"
+            "  background-color: rgba(255, 255, 255, 0.055);"
+            "  border: 1px solid rgba(255, 255, 255, 0.11);"
+            "  border-radius: 12px;"
+            "}"
+            "QCheckBox {"
+            f"  color: {COLOR_TEXT_PRIMARY.name()};"
+            "  background: transparent;"
+            "  font-family: 'Segoe UI', sans-serif;"
+            "  font-size: 12px;"
+            "  font-weight: 600;"
+            "  spacing: 8px;"
+            "}"
+            "QCheckBox::indicator {"
+            "  width: 17px;"
+            "  height: 17px;"
+            "  border-radius: 4px;"
+            "  border: 1px solid rgba(255, 255, 255, 0.24);"
+            "  background-color: rgba(255, 255, 255, 0.07);"
+            "}"
+            "QCheckBox::indicator:hover {"
+            f"  border-color: {COLOR_ACCENT_GREEN.name()};"
+            "}"
+            "QCheckBox::indicator:checked {"
+            f"  background-color: {COLOR_ACCENT_GREEN.name()};"
+            f"  border-color: {COLOR_ACCENT_GREEN.name()};"
+            "}"
+            "QComboBox {"
+            "  background-color: rgba(20, 20, 28, 0.72);"
+            "  border: 1px solid rgba(255, 255, 255, 0.15);"
+            "  border-radius: 7px;"
+            "  padding: 5px 10px;"
+            f"  color: {COLOR_TEXT_PRIMARY.name()};"
+            "  font-size: 12px;"
+            "  min-height: 22px;"
+            "}"
+            "QComboBox:hover, QLineEdit:hover {"
+            "  border-color: rgba(255, 255, 255, 0.30);"
+            "}"
+            "QComboBox QAbstractItemView {"
+            "  background-color: #16161E;"
+            f"  color: {COLOR_TEXT_PRIMARY.name()};"
+            "  border: 1px solid rgba(255, 255, 255, 0.16);"
+            "  selection-background-color: rgba(255, 255, 255, 0.14);"
+            "}"
+            "QLineEdit {"
+            "  background-color: rgba(20, 20, 28, 0.72);"
+            "  border: 1px solid rgba(255, 255, 255, 0.15);"
+            "  border-radius: 7px;"
+            "  padding: 6px 10px;"
+            f"  color: {COLOR_TEXT_PRIMARY.name()};"
+            "  font-size: 12px;"
+            "}"
+            "QLineEdit:focus {"
+            f"  border: 1px solid {COLOR_ACCENT_GREEN.name()};"
+            "}"
+            "QScrollBar:vertical {"
+            "  background: transparent;"
+            "  width: 8px;"
+            "  margin: 2px 0px 2px 0px;"
+            "}"
+            "QScrollBar::handle:vertical {"
+            "  background: rgba(255, 255, 255, 0.18);"
+            "  border-radius: 4px;"
+            "  min-height: 28px;"
+            "}"
+            "QScrollBar::handle:vertical:hover {"
+            "  background: rgba(255, 255, 255, 0.30);"
+            "}"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
+            "  height: 0px;"
+            "}"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {"
+            "  background: none;"
+            "}"
+        )
 
         root_layout = QHBoxLayout(self)
-        root_layout.setContentsMargins(12, 12, 12, 12)
-        root_layout.setSpacing(12)
+        root_layout.setContentsMargins(16, 16, 16, 16)
+        root_layout.setSpacing(16)
 
-        # 1. Persistent Left Navigation Sidebar (160px)
+        # 1. Persistent Left Navigation Sidebar (185px) — Frosted Glass
         self.sidebar = QListWidget(self)
-        self.sidebar.setFixedWidth(160)
+        self.sidebar.setFixedWidth(185)
         self.sidebar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.sidebar.setStyleSheet(
             "QListWidget {"
-            f"  background-color: {COLOR_BG_MANTLE.name()};"
-            f"  border: 1px solid {COLOR_BORDER.name()};"
-            "  border-radius: 8px;"
-            "  padding: 6px;"
+            "  background-color: rgba(255, 255, 255, 0.045);"
+            "  border: 1px solid rgba(255, 255, 255, 0.10);"
+            "  border-radius: 12px;"
+            "  padding: 8px;"
             f"  color: {COLOR_TEXT_PRIMARY.name()};"
             "  font-family: 'Segoe UI', sans-serif;"
             "  font-size: 12px;"
             "  outline: 0;"
             "}"
             "QListWidget::item {"
-            "  height: 36px;"
-            "  padding-left: 12px;"
-            "  border-radius: 6px;"
-            "  margin-bottom: 3px;"
+            "  height: 40px;"
+            "  padding-left: 14px;"
+            "  border-radius: 8px;"
+            "  margin-bottom: 4px;"
             "  border: none;"
             "}"
             "QListWidget::item:selected {"
-            f"  background-color: {COLOR_BG_SURFACE.name()};"
+            "  background-color: rgba(255, 255, 255, 0.11);"
             "  color: #FFFFFF;"
             "  font-weight: bold;"
             f"  border-left: 3px solid {COLOR_ACCENT_GREEN.name()};"
             "}"
             "QListWidget::item:hover:!selected {"
-            f"  background-color: {COLOR_BG_BASE.name()};"
+            "  background-color: rgba(255, 255, 255, 0.06);"
             "  color: #FFFFFF;"
             "}"
             "QListWidget:focus {"
@@ -452,298 +737,270 @@ class SettingsDialog(QDialog):
         # 2. Right Content Area Container
         right_container = QWidget(self)
         right_layout = QVBoxLayout(right_container)
-        right_layout.setContentsMargins(4, 4, 4, 4)
-        right_layout.setSpacing(10)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(12)
 
         # QStackedWidget for Page switching
         self.stacked_widget = QStackedWidget(right_container)
 
         # Page 0: General Preferences
-        page_prefs = QWidget()
-        layout_prefs = QVBoxLayout(page_prefs)
-        layout_prefs.setContentsMargins(0, 0, 0, 0)
-        layout_prefs.setSpacing(10)
+        page_prefs, layout_prefs = self._create_scrollable_page(
+            "General Preferences",
+            "Manage Windows startup behavior, window visibility, monitor target, and synchronized lyrics.",
+        )
 
-        lbl_prefs_title = QLabel("General Preferences", page_prefs)
-        lbl_prefs_title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        lbl_prefs_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()};")
-        layout_prefs.addWidget(lbl_prefs_title)
+        card_startup, layout_startup = self._create_setting_card(page_prefs, "Startup & System Tray")
+        self.chk_autostart_windows = QCheckBox("Start with Windows", card_startup)
+        self.lbl_autostart_windows_desc = self._add_toggle_block(
+            layout_startup,
+            self.chk_autostart_windows,
+            "Automatically launch MediaDock when you log into Windows.",
+        )
+        self.chk_start_hidden = QCheckBox("Start Minimized to Tray", card_startup)
+        self.lbl_start_hidden_desc = self._add_toggle_block(
+            layout_startup,
+            self.chk_start_hidden,
+            "Start silently in the system tray without immediately displaying the notch.",
+        )
+        self.chk_close_to_tray = QCheckBox("Close to System Tray", card_startup)
+        self.lbl_close_to_tray_desc = self._add_toggle_block(
+            layout_startup,
+            self.chk_close_to_tray,
+            "Keep MediaDock running in the system tray when closing the overlay instead of exiting.",
+        )
+        layout_prefs.addWidget(card_startup)
 
-        line_p = QFrame(page_prefs)
-        line_p.setFrameShape(QFrame.Shape.HLine)
-        line_p.setFrameShadow(QFrame.Shadow.Sunken)
-        line_p.setStyleSheet(f"color: {COLOR_BORDER.name()};")
-        layout_prefs.addWidget(line_p)
-
-        self.chk_close_to_tray = QCheckBox("Close to System Tray", page_prefs)
-        self.lbl_close_to_tray_desc = QLabel("Closing main window hides to tray instead of quitting process", page_prefs)
-        self.lbl_close_to_tray_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;")
-
-        self.chk_start_hidden = QCheckBox("Start Minimized to Tray", page_prefs)
-        self.lbl_start_hidden_desc = QLabel("Application starts silently in system tray without opening window", page_prefs)
-        self.lbl_start_hidden_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;")
-
-        self.chk_autostart_windows = QCheckBox("Start with Windows", page_prefs)
-        self.lbl_autostart_windows_desc = QLabel("Automatically launch MediaDock when you log into Windows", page_prefs)
-        self.lbl_autostart_windows_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;")
-
-        self.chk_always_on_top = QCheckBox("Always On Top", page_prefs)
-        self.lbl_always_on_top_desc = QLabel("Keep window floating above other application windows", page_prefs)
-        self.lbl_always_on_top_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;")
-
-        self.chk_dynamic_island = QCheckBox("Enable Dynamic Island (Top Notch)", page_prefs)
-        self.lbl_dynamic_island_desc = QLabel("Anchors ambient notch screen to top-center of selected screen", page_prefs)
-        self.lbl_dynamic_island_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;")
-
-        self.chk_fullscreen_auto_hide = QCheckBox("Auto-Hide in Fullscreen Games & Apps", page_prefs)
-        self.lbl_fullscreen_auto_hide_desc = QLabel("Suppresses top notch overlay when playing games or watching fullscreen videos", page_prefs)
-        self.lbl_fullscreen_auto_hide_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;")
-
-        self.chk_lyrics_enabled = QCheckBox("Enable Live Synchronized Lyrics", page_prefs)
-        self.lbl_lyrics_desc = QLabel("Displays synchronized lyric lines in expanded media card when available", page_prefs)
-        self.lbl_lyrics_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; margin-left: 24px;")
-
-        mon_layout = QHBoxLayout()
-        mon_layout.setContentsMargins(24, 4, 0, 0)
-        lbl_mon = QLabel("Target Display Monitor:", page_prefs)
-        lbl_mon.setStyleSheet("font-size: 12px;")
-        self.combo_display_monitor = QComboBox(page_prefs)
-        self.combo_display_monitor.setFixedWidth(160)
+        card_display, layout_display = self._create_setting_card(page_prefs, "Window & Display")
+        self.chk_always_on_top = QCheckBox("Always On Top", card_display)
+        self.lbl_always_on_top_desc = self._add_toggle_block(
+            layout_display,
+            self.chk_always_on_top,
+            "Keep the Dynamic Island notch floating above other application windows.",
+        )
+        self.chk_dynamic_island = QCheckBox("Enable Dynamic Island (Top Notch)", card_display)
+        self.lbl_dynamic_island_desc = self._add_toggle_block(
+            layout_display,
+            self.chk_dynamic_island,
+            "Anchor the ambient media notch at the top-center bezel of the selected screen.",
+        )
+        self.chk_fullscreen_auto_hide = QCheckBox("Auto-Hide in Fullscreen Games & Apps", card_display)
+        self.lbl_fullscreen_auto_hide_desc = self._add_toggle_block(
+            layout_display,
+            self.chk_fullscreen_auto_hide,
+            "Suppress the top notch overlay automatically while gaming or watching fullscreen videos.",
+        )
+        self.combo_display_monitor = QComboBox(card_display)
+        self.combo_display_monitor.setFixedWidth(220)
         self.combo_display_monitor.addItem("Primary Monitor", "primary")
-        from PySide6.QtGui import QGuiApplication
         screens = QGuiApplication.screens()
         for idx, scr in enumerate(screens):
             self.combo_display_monitor.addItem(f"Monitor {idx + 1} ({scr.name()})", scr.name())
-        mon_layout.addWidget(lbl_mon)
-        mon_layout.addWidget(self.combo_display_monitor)
-        mon_layout.addStretch()
+        self._add_control_row(
+            layout_display,
+            "Target Display Monitor",
+            self.combo_display_monitor,
+            "Choose which screen displays the top-center Dynamic Island overlay.",
+        )
+        layout_prefs.addWidget(card_display)
 
-        layout_prefs.addWidget(self.chk_close_to_tray)
-        layout_prefs.addWidget(self.lbl_close_to_tray_desc)
-        layout_prefs.addWidget(self.chk_start_hidden)
-        layout_prefs.addWidget(self.lbl_start_hidden_desc)
-        layout_prefs.addWidget(self.chk_autostart_windows)
-        layout_prefs.addWidget(self.lbl_autostart_windows_desc)
-        layout_prefs.addWidget(self.chk_always_on_top)
-        layout_prefs.addWidget(self.lbl_always_on_top_desc)
-        layout_prefs.addWidget(self.chk_dynamic_island)
-        layout_prefs.addWidget(self.lbl_dynamic_island_desc)
-        layout_prefs.addWidget(self.chk_fullscreen_auto_hide)
-        layout_prefs.addWidget(self.lbl_fullscreen_auto_hide_desc)
-        layout_prefs.addWidget(self.chk_lyrics_enabled)
-        layout_prefs.addWidget(self.lbl_lyrics_desc)
-        layout_prefs.addLayout(mon_layout)
-        layout_prefs.addStretch()
+        card_media, layout_media = self._create_setting_card(page_prefs, "Media Experience")
+        self.chk_lyrics_enabled = QCheckBox("Enable Live Synchronized Lyrics", card_media)
+        self.lbl_lyrics_desc = self._add_toggle_block(
+            layout_media,
+            self.chk_lyrics_enabled,
+            "Display synced lyrics inside the expanded media card when matching lyrics are found.",
+        )
+        layout_prefs.addWidget(card_media)
+        layout_prefs.addStretch(1)
 
         self.stacked_widget.addWidget(page_prefs)
 
         # Page 1: Global Shortcuts
-        page_hk = QWidget()
-        layout_hk = QVBoxLayout(page_hk)
-        layout_hk.setContentsMargins(0, 0, 0, 0)
-        layout_hk.setSpacing(10)
+        page_hk, layout_hk = self._create_scrollable_page(
+            "Global Shortcuts",
+            "Configure system-wide keyboard shortcuts using a 2-key or 3-key modifier combination.",
+        )
 
-        lbl_hk_title = QLabel("Global Shortcuts", page_hk)
-        lbl_hk_title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        lbl_hk_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()};")
-        layout_hk.addWidget(lbl_hk_title)
+        card_hk, layout_hk_card = self._create_setting_card(page_hk, "Shortcut Bindings")
+        self.rec_hotkey_show_hide = ShortcutRecorderWidget("Ctrl+Alt+S", card_hk)
+        self.rec_hotkey_show_hide.setMinimumWidth(250)
+        self._add_control_row(
+            layout_hk_card,
+            "Show / Hide Overlay",
+            self.rec_hotkey_show_hide,
+            "Toggle the Dynamic Island overlay visibility from anywhere on the desktop.",
+        )
 
-        lbl_hk_sub = QLabel("Configure OS-wide shortcuts (strictly 2 or 3 keys required)", page_hk)
-        lbl_hk_sub.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px;")
-        layout_hk.addWidget(lbl_hk_sub)
+        self.rec_hotkey_play_pause = ShortcutRecorderWidget("Ctrl+Alt+Space", card_hk)
+        self.rec_hotkey_play_pause.setMinimumWidth(250)
+        self._add_control_row(
+            layout_hk_card,
+            "Play / Pause Media",
+            self.rec_hotkey_play_pause,
+            "Toggle playback on the active Windows media session globally.",
+        )
 
-        line_hk = QFrame(page_hk)
-        line_hk.setFrameShape(QFrame.Shape.HLine)
-        line_hk.setFrameShadow(QFrame.Shadow.Sunken)
-        line_hk.setStyleSheet(f"color: {COLOR_BORDER.name()};")
-        layout_hk.addWidget(line_hk)
-
-        hk_sh_layout = QHBoxLayout()
-        lbl_hk_sh = QLabel("Show / Hide:", page_hk)
-        lbl_hk_sh.setFixedWidth(90)
-        self.rec_hotkey_show_hide = ShortcutRecorderWidget("Ctrl+Alt+S", page_hk)
-        hk_sh_layout.addWidget(lbl_hk_sh)
-        hk_sh_layout.addWidget(self.rec_hotkey_show_hide)
-        layout_hk.addLayout(hk_sh_layout)
-
-        hk_pp_layout = QHBoxLayout()
-        lbl_hk_pp = QLabel("Play / Pause:", page_hk)
-        lbl_hk_pp.setFixedWidth(90)
-        self.rec_hotkey_play_pause = ShortcutRecorderWidget("Ctrl+Alt+Space", page_hk)
-        hk_pp_layout.addWidget(lbl_hk_pp)
-        hk_pp_layout.addWidget(self.rec_hotkey_play_pause)
-        layout_hk.addLayout(hk_pp_layout)
-
-        self.lbl_error = QLabel("", page_hk)
-        self.lbl_error.setStyleSheet("color: #F38BA8; font-size: 11px;")
+        self.lbl_error = QLabel("", card_hk)
+        self.lbl_error.setStyleSheet("color: #F38BA8; font-size: 11px; padding-top: 4px;")
         self.lbl_error.setWordWrap(True)
         self.lbl_error.hide()
-        layout_hk.addWidget(self.lbl_error)
-        layout_hk.addStretch()
+        layout_hk_card.addWidget(self.lbl_error)
+        layout_hk.addWidget(card_hk)
+
+        card_hk_tips, layout_hk_tips = self._create_setting_card(page_hk, "Shortcut Guidelines")
+        lbl_hk_tip = QLabel(
+            "Click any shortcut box and press your desired combination (for example: Ctrl+Alt+S or Ctrl+Shift+Space).\n"
+            "Press Esc while recording to cancel. Shortcuts require 1+ modifier key (Ctrl, Alt, Shift, Win) and total 2 or 3 keys.",
+            card_hk_tips,
+        )
+        lbl_hk_tip.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; line-height: 1.4;")
+        lbl_hk_tip.setWordWrap(True)
+        layout_hk_tips.addWidget(lbl_hk_tip)
+        layout_hk.addWidget(card_hk_tips)
+        layout_hk.addStretch(1)
 
         self.stacked_widget.addWidget(page_hk)
 
         # Page 2: Dynamic Island Settings
-        page_di = QWidget()
-        layout_di = QVBoxLayout(page_di)
-        layout_di.setContentsMargins(0, 0, 0, 0)
-        layout_di.setSpacing(10)
+        page_di, layout_di = self._create_scrollable_page(
+            "Dynamic Island",
+            "Fine-tune how the notch expands on interaction and when it returns to compact view.",
+        )
 
-        lbl_di_title = QLabel("Dynamic Island Settings", page_di)
-        lbl_di_title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        lbl_di_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()};")
-        layout_di.addWidget(lbl_di_title)
-
-        line_di = QFrame(page_di)
-        line_di.setFrameShape(QFrame.Shape.HLine)
-        line_di.setFrameShadow(QFrame.Shadow.Sunken)
-        line_di.setStyleSheet(f"color: {COLOR_BORDER.name()};")
-        layout_di.addWidget(line_di)
-
-        trigger_layout = QHBoxLayout()
-        lbl_trig = QLabel("Expansion Trigger:", page_di)
-        lbl_trig.setStyleSheet("font-size: 12px;")
-        self.combo_expand_trigger = QComboBox(page_di)
-        self.combo_expand_trigger.setFixedWidth(140)
+        card_expand, layout_expand = self._create_setting_card(page_di, "Expansion Interaction")
+        self.combo_expand_trigger = QComboBox(card_expand)
+        self.combo_expand_trigger.setFixedWidth(180)
         self.combo_expand_trigger.addItem("Hover to Expand", "hover")
         self.combo_expand_trigger.addItem("Click to Expand", "click")
-        trigger_layout.addWidget(lbl_trig)
-        trigger_layout.addWidget(self.combo_expand_trigger)
-        trigger_layout.addStretch()
-        layout_di.addLayout(trigger_layout)
+        self._add_control_row(
+            layout_expand,
+            "Expansion Trigger",
+            self.combo_expand_trigger,
+            "Open the expanded media player either on mouse hover or explicit click.",
+        )
 
-        intent_layout = QHBoxLayout()
-        lbl_intent = QLabel("Hover Intent Delay:", page_di)
-        lbl_intent.setStyleSheet("font-size: 12px;")
-        self.spn_hover_intent = QSpinBox(page_di)
+        self.spn_hover_intent = QSpinBox(card_expand)
         self.spn_hover_intent.setRange(0, 1000)
         self.spn_hover_intent.setSingleStep(50)
         self.spn_hover_intent.setSuffix(" ms")
-        self.spn_hover_intent.setFixedWidth(130)
-        self.spn_hover_intent.setFixedHeight(30)
-        intent_layout.addWidget(lbl_intent)
-        intent_layout.addWidget(self.spn_hover_intent)
-        intent_layout.addStretch()
-        layout_di.addLayout(intent_layout)
-
-        lbl_intent_desc = QLabel(
-            "Delay before hover expands the notch, preventing accidental triggers when moving mouse past the top bezel.", page_di
+        self.spn_hover_intent.setFixedWidth(140)
+        self.spn_hover_intent.setFixedHeight(32)
+        self._add_control_row(
+            layout_expand,
+            "Hover Intent Delay",
+            self.spn_hover_intent,
+            "Delay before hover expands the notch, reducing accidental expansion near the top bezel.",
         )
-        lbl_intent_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px;")
-        lbl_intent_desc.setWordWrap(True)
-        layout_di.addWidget(lbl_intent_desc)
+        layout_di.addWidget(card_expand)
 
-        delay_layout = QHBoxLayout()
-        lbl_delay = QLabel("Collapse Delay:", page_di)
-        lbl_delay.setStyleSheet("font-size: 12px;")
-        self.spn_collapse_delay = CollapseDelaySpinBox(page_di)
-        delay_layout.addWidget(lbl_delay)
-        delay_layout.addWidget(self.spn_collapse_delay)
-        delay_layout.addStretch()
-        layout_di.addLayout(delay_layout)
-
-        lbl_delay_desc = QLabel(
-            "Time in milliseconds before the expanded media card auto-collapses back to the notch upon mouse leave.", page_di
+        card_collapse, layout_collapse = self._create_setting_card(page_di, "Auto-Collapse Timing")
+        self.spn_collapse_delay = CollapseDelaySpinBox(card_collapse)
+        self.spn_collapse_delay.setFixedWidth(140)
+        self.spn_collapse_delay.setFixedHeight(32)
+        self._add_control_row(
+            layout_collapse,
+            "Collapse Delay",
+            self.spn_collapse_delay,
+            "Time in milliseconds before the expanded card automatically collapses after pointer leaves.",
         )
-        lbl_delay_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px;")
-        lbl_delay_desc.setWordWrap(True)
-        layout_di.addWidget(lbl_delay_desc)
-        layout_di.addStretch()
+        layout_di.addWidget(card_collapse)
+        layout_di.addStretch(1)
 
         self.stacked_widget.addWidget(page_di)
 
-        # Page 3: Appearance Baseline
-        page_app = QWidget()
-        layout_app = QVBoxLayout(page_app)
-        layout_app.setContentsMargins(0, 0, 0, 0)
-        layout_app.setSpacing(10)
-
-        lbl_app_title = QLabel("Appearance", page_app)
-        lbl_app_title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        lbl_app_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()};")
-        layout_app.addWidget(lbl_app_title)
-
-        line_app = QFrame(page_app)
-        line_app.setFrameShape(QFrame.Shape.HLine)
-        line_app.setFrameShadow(QFrame.Shadow.Sunken)
-        line_app.setStyleSheet(f"color: {COLOR_BORDER.name()};")
-        layout_app.addWidget(line_app)
-
-        lbl_app_info = QLabel(
-            "MediaDock System Visual Identity (Fixed Product Baseline):\n"
-            "Dynamic Island background (#000000), border (#000000), and status indicators (Active #00FF7F, Inactive #C1121C) are fixed by product identity and are non-customizable.",
-            page_app,
+        # Page 3: Appearance (Hex Background & Border Only — No Status Colors)
+        page_app, layout_app = self._create_scrollable_page(
+            "Appearance",
+            "Customize the Dynamic Island background and border colors directly using 6-digit hex color codes.",
         )
-        lbl_app_info.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px;")
-        lbl_app_info.setWordWrap(True)
-        layout_app.addWidget(lbl_app_info)
 
-        # Fixed System Color Badges
-        color_grid = QHBoxLayout()
-        colors = [
-            ("Background", "#000000"),
-            ("Border", "#000000"),
-            ("Active Status", "#00FF7F"),
-            ("Inactive Status", "#C1121C"),
-        ]
-        for label, hex_code in colors:
-            badge = QWidget(page_app)
-            badge_l = QVBoxLayout(badge)
-            badge_l.setContentsMargins(6, 6, 6, 6)
-            swatch = QLabel(badge)
-            swatch.setFixedSize(36, 22)
-            swatch.setStyleSheet(f"background-color: {hex_code}; border-radius: 4px; border: 1px solid #2A2A2A;")
-            lbl_c = QLabel(label, badge)
-            lbl_c.setStyleSheet("font-size: 10px; color: #FFFFFF;")
-            badge_l.addWidget(swatch, 0, Qt.AlignmentFlag.AlignCenter)
-            badge_l.addWidget(lbl_c, 0, Qt.AlignmentFlag.AlignCenter)
-            color_grid.addWidget(badge)
-        color_grid.addStretch()
-        layout_app.addLayout(color_grid)
-        layout_app.addStretch()
+        card_colors, layout_colors = self._create_setting_card(page_app, "Custom Hex Colors")
+
+        self.swatch_bg_preview = QFrame(card_colors)
+        self.swatch_bg_preview.setFixedSize(34, 34)
+        self.txt_bg_color_hex = QLineEdit(card_colors)
+        self.txt_bg_color_hex.setFixedSize(124, 34)
+        self.txt_bg_color_hex.setMaxLength(7)
+        self.txt_bg_color_hex.setPlaceholderText("#000000")
+        self.txt_bg_color_hex.setFont(QFont("Consolas", 11))
+        self.txt_bg_color_hex.textChanged.connect(self._on_appearance_hex_changed)
+        self._add_control_row(
+            layout_colors,
+            "Background Color (Hex)",
+            self.txt_bg_color_hex,
+            "Fill color used by the Dynamic Island capsule and expanded card (e.g. #000000 or #0E1117).",
+            extra_controls=[self.swatch_bg_preview],
+        )
+
+        self.swatch_border_preview = QFrame(card_colors)
+        self.swatch_border_preview.setFixedSize(34, 34)
+        self.txt_border_color_hex = QLineEdit(card_colors)
+        self.txt_border_color_hex.setFixedSize(124, 34)
+        self.txt_border_color_hex.setMaxLength(7)
+        self.txt_border_color_hex.setPlaceholderText("#000000")
+        self.txt_border_color_hex.setFont(QFont("Consolas", 11))
+        self.txt_border_color_hex.textChanged.connect(self._on_appearance_hex_changed)
+        self._add_control_row(
+            layout_colors,
+            "Border Color (Hex)",
+            self.txt_border_color_hex,
+            "Outer outline border drawn around both the collapsed and expanded notch (e.g. #000000 or #00FF7F).",
+            extra_controls=[self.swatch_border_preview],
+        )
+
+        self.lbl_appearance_error = QLabel("", card_colors)
+        self.lbl_appearance_error.setStyleSheet("color: #F38BA8; font-size: 11px;")
+        self.lbl_appearance_error.setWordWrap(True)
+        self.lbl_appearance_error.hide()
+        layout_colors.addWidget(self.lbl_appearance_error)
+
+        app_actions_row = QHBoxLayout()
+        app_actions_row.addStretch()
+        self.btn_reset_appearance = QPushButton("Reset to Default (#000000)", card_colors)
+        self.btn_reset_appearance.setFixedHeight(30)
+        self.btn_reset_appearance.setStyleSheet(get_button_stylesheet())
+        self.btn_reset_appearance.clicked.connect(self._reset_appearance_defaults)
+        app_actions_row.addWidget(self.btn_reset_appearance)
+        layout_colors.addLayout(app_actions_row)
+        layout_app.addWidget(card_colors)
+
+        card_preview, layout_preview = self._create_setting_card(page_app, "Live Notch Preview")
+        preview_stage = QFrame(card_preview)
+        preview_stage.setFixedHeight(78)
+        preview_stage.setStyleSheet("background-color: #181820; border: 1px dashed #2E2E38; border-radius: 8px;")
+        stage_layout = QHBoxLayout(preview_stage)
+        stage_layout.setContentsMargins(16, 12, 16, 12)
+        stage_layout.addStretch()
+
+        self.appearance_preview_pill = QFrame(preview_stage)
+        self.appearance_preview_pill.setFixedSize(250, 38)
+        pill_layout = QHBoxLayout(self.appearance_preview_pill)
+        pill_layout.setContentsMargins(14, 0, 14, 0)
+        pill_layout.setSpacing(8)
+        self.appearance_preview_title = QLabel("♪  MediaDock — Now Playing", self.appearance_preview_pill)
+        self.appearance_preview_title.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: 600; background: transparent; border: none;")
+        self.appearance_preview_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pill_layout.addWidget(self.appearance_preview_title)
+
+        stage_layout.addWidget(self.appearance_preview_pill)
+        stage_layout.addStretch()
+        layout_preview.addWidget(preview_stage)
+        layout_app.addWidget(card_preview)
+        layout_app.addStretch(1)
 
         self.stacked_widget.addWidget(page_app)
 
         # Page 4: Audio & Equalizer Settings
-        page_aud = QWidget()
-        layout_aud_root = QVBoxLayout(page_aud)
-        layout_aud_root.setContentsMargins(0, 0, 0, 0)
-        layout_aud_root.setSpacing(6)
-
-        lbl_aud_title = QLabel("Audio & Equalizer", page_aud)
-        lbl_aud_title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        lbl_aud_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()};")
-        layout_aud_root.addWidget(lbl_aud_title)
-
-        lbl_aud_sub = QLabel("Configure system-wide audio boost, tone filters, and 5-band graphic equalizer.", page_aud)
-        lbl_aud_sub.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px;")
-        layout_aud_root.addWidget(lbl_aud_sub)
-
-        line_aud = QFrame(page_aud)
-        line_aud.setFrameShape(QFrame.Shape.HLine)
-        line_aud.setFrameShadow(QFrame.Shadow.Sunken)
-        line_aud.setStyleSheet(f"color: {COLOR_BORDER.name()};")
-        layout_aud_root.addWidget(line_aud)
-
-        # Scroll Area for dense audio controls
-        scroll_aud = QScrollArea(page_aud)
-        scroll_aud.setWidgetResizable(True)
-        scroll_aud.setFrameShape(QFrame.Shape.NoFrame)
-        scroll_aud.setStyleSheet("background: transparent; border: none;")
-
-        aud_container = QWidget()
-        layout_aud = QVBoxLayout(aud_container)
-        layout_aud.setContentsMargins(0, 4, 12, 4)
-        layout_aud.setSpacing(10)
-
-        # 1. Equalizer APO Status Card
-        card_apo = QFrame(aud_container)
-        card_apo.setStyleSheet(
-            f"background-color: {COLOR_BG_MANTLE.name()}; border: 1px solid {COLOR_BORDER.name()}; border-radius: 6px; padding: 4px;"
+        page_aud, layout_aud = self._create_scrollable_page(
+            "Audio & Equalizer",
+            "Configure visualizer spectrum mode, software/APO boost, tone filters, and 5-band equalizer.",
         )
-        layout_card = QHBoxLayout(card_apo)
-        layout_card.setContentsMargins(8, 6, 8, 6)
-        layout_card.setSpacing(10)
+
+        # 1. Equalizer APO Status & Master Toggle Card
+        card_apo, layout_card_outer = self._create_setting_card(page_aud, "Audio Processing Engine")
+        layout_card = QHBoxLayout()
+        layout_card.setContentsMargins(0, 0, 0, 0)
+        layout_card.setSpacing(12)
 
         is_apo_installed = self._apo_manager.is_installed()
         if is_apo_installed:
@@ -753,8 +1010,9 @@ class SettingsDialog(QDialog):
         else:
             lbl_apo_status = QLabel("○ Equalizer APO not detected. Visualizer EQ active.", card_apo)
             lbl_apo_status.setStyleSheet("color: #E0AF68; font-size: 11px;")
+            lbl_apo_status.setWordWrap(True)
             btn_install_apo = QPushButton("Install Driver...", card_apo)
-            btn_install_apo.setFixedHeight(24)
+            btn_install_apo.setFixedHeight(28)
             btn_install_apo.setStyleSheet(get_button_stylesheet())
             btn_install_apo.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(EQUALIZER_APO_DOWNLOAD_URL)))
             layout_card.addWidget(lbl_apo_status, 1)
@@ -763,36 +1021,32 @@ class SettingsDialog(QDialog):
         self.chk_eq_enabled = QCheckBox("Enable EQ & Enhancements", card_apo)
         self.chk_eq_enabled.stateChanged.connect(self._on_audio_control_changed)
         layout_card.addWidget(self.chk_eq_enabled)
-        layout_aud.addWidget(card_apo)
+        layout_card_outer.addLayout(layout_card)
 
-        spec_layout = QHBoxLayout()
-        lbl_spec = QLabel("Visualizer Spectrum Mode:", aud_container)
-        lbl_spec.setStyleSheet("font-size: 11px;")
-        self.combo_spectrum_mode = QComboBox(aud_container)
-        self.combo_spectrum_mode.setFixedWidth(200)
+        self.combo_spectrum_mode = QComboBox(card_apo)
+        self.combo_spectrum_mode.setFixedWidth(220)
         self.combo_spectrum_mode.addItem("True FFT Frequency Spectrum", "fft")
         self.combo_spectrum_mode.addItem("Time-Domain RMS Energy", "rms")
-        spec_layout.addWidget(lbl_spec)
-        spec_layout.addWidget(self.combo_spectrum_mode)
-        spec_layout.addStretch()
-        layout_aud.addLayout(spec_layout)
+        self._add_control_row(
+            layout_card_outer,
+            "Visualizer Spectrum Mode",
+            self.combo_spectrum_mode,
+            "Select frequency-bin FFT bars or balanced RMS energy envelope.",
+        )
+        layout_aud.addWidget(card_apo)
 
         slider_qss = (
-            "QSlider::groove:horizontal { height: 4px; background: #2A2A2A; border-radius: 2px; }"
+            "QSlider::groove:horizontal { height: 5px; background: #262630; border-radius: 2px; }"
             "QSlider::sub-page:horizontal { background: #00FF7F; border-radius: 2px; }"
-            "QSlider::handle:horizontal { background: #FFFFFF; border: 1px solid #141414; width: 12px; margin-top: -4px; margin-bottom: -4px; border-radius: 6px; }"
+            "QSlider::handle:horizontal { background: #FFFFFF; border: 1px solid #141414; width: 14px; margin-top: -5px; margin-bottom: -5px; border-radius: 7px; }"
         )
 
-        # 2. Audio Boost (Preamp) Section
-        boost_box = QWidget(aud_container)
-        boost_l = QVBoxLayout(boost_box)
-        boost_l.setContentsMargins(0, 0, 0, 0)
-        boost_l.setSpacing(2)
+        # 2. Audio Boost (Preamp) Card
+        boost_box, boost_l = self._create_setting_card(page_aud, "Audio Boost (Preamp)")
 
         boost_hdr = QHBoxLayout()
-        lbl_preamp_title = QLabel("Audio Boost (Preamp):", boost_box)
-        lbl_preamp_title.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        lbl_preamp_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()};")
+        lbl_preamp_title = QLabel("Gain Level", boost_box)
+        lbl_preamp_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()}; font-size: 12px; font-weight: 600;")
         self.lbl_preamp_val = QLabel("+0.0 dB (100%)", boost_box)
         self.lbl_preamp_val.setStyleSheet("color: #00FF7F; font-size: 11px; font-weight: bold;")
         boost_hdr.addWidget(lbl_preamp_title)
@@ -807,31 +1061,24 @@ class SettingsDialog(QDialog):
         self.sld_preamp.valueChanged.connect(self._on_audio_control_changed)
         boost_l.addWidget(self.sld_preamp)
 
-        lbl_boost_hint = QLabel("Amplifies system volume output up to +12 dB and scales visualizer reactivity.", boost_box)
-        lbl_boost_hint.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 10px;")
+        lbl_boost_hint = QLabel("Amplifies audio gain up to +12.0 dB and scales visualizer sensitivity.", boost_box)
+        lbl_boost_hint.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px;")
+        lbl_boost_hint.setWordWrap(True)
         boost_l.addWidget(lbl_boost_hint)
         layout_aud.addWidget(boost_box)
 
-        # 3. Quick Tone Controls (Bass, Clarity, Treble, Noise Filter)
-        tone_box = QWidget(aud_container)
-        tone_l = QVBoxLayout(tone_box)
-        tone_l.setContentsMargins(0, 0, 0, 0)
-        tone_l.setSpacing(4)
-
-        lbl_tone_title = QLabel("Tone & Noise Controls:", tone_box)
-        lbl_tone_title.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        lbl_tone_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()};")
-        tone_l.addWidget(lbl_tone_title)
+        # 3. Quick Tone Controls Card (Bass, Clarity, Treble, Noise Filter)
+        tone_box, tone_l = self._create_setting_card(page_aud, "Tone & Noise Controls")
 
         grid_tones = QHBoxLayout()
+        grid_tones.setSpacing(20)
         # Left column: Bass & Clarity
         col1 = QVBoxLayout()
-        col1.setSpacing(3)
-        # Bass
+        col1.setSpacing(8)
         h_bass = QHBoxLayout()
-        h_bass.addWidget(QLabel("Bass (Low-Shelf):"))
+        h_bass.addWidget(QLabel("Bass (Low-Shelf)"))
         self.lbl_bass_val = QLabel("0.0 dB")
-        self.lbl_bass_val.setStyleSheet("color: #89B4FA; font-size: 10px;")
+        self.lbl_bass_val.setStyleSheet("color: #89B4FA; font-size: 11px; font-weight: 600;")
         h_bass.addStretch()
         h_bass.addWidget(self.lbl_bass_val)
         self.sld_bass = QSlider(Qt.Orientation.Horizontal)
@@ -842,11 +1089,10 @@ class SettingsDialog(QDialog):
         col1.addLayout(h_bass)
         col1.addWidget(self.sld_bass)
 
-        # Clarity
         h_clarity = QHBoxLayout()
-        h_clarity.addWidget(QLabel("Vocal Clarity:"))
+        h_clarity.addWidget(QLabel("Vocal Clarity"))
         self.lbl_clarity_val = QLabel("0.0 dB")
-        self.lbl_clarity_val.setStyleSheet("color: #89B4FA; font-size: 10px;")
+        self.lbl_clarity_val.setStyleSheet("color: #89B4FA; font-size: 11px; font-weight: 600;")
         h_clarity.addStretch()
         h_clarity.addWidget(self.lbl_clarity_val)
         self.sld_clarity = QSlider(Qt.Orientation.Horizontal)
@@ -856,16 +1102,15 @@ class SettingsDialog(QDialog):
         self.sld_clarity.valueChanged.connect(self._on_audio_control_changed)
         col1.addLayout(h_clarity)
         col1.addWidget(self.sld_clarity)
-        grid_tones.addLayout(col1)
+        grid_tones.addLayout(col1, 1)
 
         # Right column: Treble & Noise Gate
         col2 = QVBoxLayout()
-        col2.setSpacing(3)
-        # Treble
+        col2.setSpacing(8)
         h_treble = QHBoxLayout()
-        h_treble.addWidget(QLabel("Treble / Air:"))
+        h_treble.addWidget(QLabel("Treble / Air"))
         self.lbl_treble_val = QLabel("0.0 dB")
-        self.lbl_treble_val.setStyleSheet("color: #89B4FA; font-size: 10px;")
+        self.lbl_treble_val.setStyleSheet("color: #89B4FA; font-size: 11px; font-weight: 600;")
         h_treble.addStretch()
         h_treble.addWidget(self.lbl_treble_val)
         self.sld_treble = QSlider(Qt.Orientation.Horizontal)
@@ -876,11 +1121,10 @@ class SettingsDialog(QDialog):
         col2.addLayout(h_treble)
         col2.addWidget(self.sld_treble)
 
-        # Noise Filter
         h_noise = QHBoxLayout()
-        h_noise.addWidget(QLabel("Noise Filter:"))
+        h_noise.addWidget(QLabel("Noise Filter"))
         self.lbl_noise_gate_val = QLabel("5%")
-        self.lbl_noise_gate_val.setStyleSheet("color: #89B4FA; font-size: 10px;")
+        self.lbl_noise_gate_val.setStyleSheet("color: #89B4FA; font-size: 11px; font-weight: 600;")
         h_noise.addStretch()
         h_noise.addWidget(self.lbl_noise_gate_val)
         self.sld_noise_gate = QSlider(Qt.Orientation.Horizontal)
@@ -890,79 +1134,73 @@ class SettingsDialog(QDialog):
         self.sld_noise_gate.valueChanged.connect(self._on_audio_control_changed)
         col2.addLayout(h_noise)
         col2.addWidget(self.sld_noise_gate)
-        grid_tones.addLayout(col2)
+        grid_tones.addLayout(col2, 1)
 
         tone_l.addLayout(grid_tones)
         layout_aud.addWidget(tone_box)
 
-        # 4. 5-Band Equalizer Section
-        eq_box = QWidget(aud_container)
-        eq_l = QVBoxLayout(eq_box)
-        eq_l.setContentsMargins(0, 0, 0, 0)
-        eq_l.setSpacing(4)
+        # 4. 5-Band Equalizer Card
+        eq_box, eq_l = self._create_setting_card(page_aud, "5-Band Equalizer")
 
         eq_hdr = QHBoxLayout()
-        lbl_eq_title = QLabel("5-Band Equalizer:", eq_box)
-        lbl_eq_title.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        lbl_eq_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()};")
-        eq_hdr.addWidget(lbl_eq_title)
+        lbl_eq_sub = QLabel("Preset Profile", eq_box)
+        lbl_eq_sub.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px;")
+        eq_hdr.addWidget(lbl_eq_sub)
         eq_hdr.addStretch()
 
         self.cmb_preset = QComboBox(eq_box)
+        self.cmb_preset.setFixedWidth(150)
         self.cmb_preset.addItems(["Flat", "Bass Boost", "Vocal Clarity", "Electronic", "Rock", "Acoustic", "Custom"])
-        self.cmb_preset.setStyleSheet(
-            f"QComboBox {{ background-color: {COLOR_BG_MANTLE.name()}; border: 1px solid {COLOR_BORDER.name()}; border-radius: 4px; padding: 2px 8px; color: {COLOR_TEXT_PRIMARY.name()}; font-size: 11px; }} QComboBox QAbstractItemView {{ background-color: {COLOR_BG_BASE.name()}; color: {COLOR_TEXT_PRIMARY.name()}; selection-background-color: {COLOR_BG_SURFACE.name()}; }}"
-        )
         self.cmb_preset.currentTextChanged.connect(self._on_preset_changed)
         eq_hdr.addWidget(self.cmb_preset)
 
         self.btn_reset_eq = QPushButton("Reset Flat", eq_box)
-        self.btn_reset_eq.setFixedHeight(24)
+        self.btn_reset_eq.setFixedHeight(30)
         self.btn_reset_eq.setStyleSheet(get_button_stylesheet())
         self.btn_reset_eq.clicked.connect(self._reset_eq_flat)
         eq_hdr.addWidget(self.btn_reset_eq)
         eq_l.addLayout(eq_hdr)
 
-        # 5 Equalizer Sliders
+        # 5 Spacious Equalizer Sliders
         eq_bands_layout = QHBoxLayout()
-        eq_bands_layout.setSpacing(8)
+        eq_bands_layout.setContentsMargins(8, 6, 8, 2)
+        eq_bands_layout.setSpacing(14)
 
         self.eq_band_sliders: List[QSlider] = []
         self.eq_band_labels: List[QLabel] = []
         freq_names = ["60 Hz", "250 Hz", "1 kHz", "4 kHz", "16 kHz"]
 
-        for i, name in enumerate(freq_names):
+        for name in freq_names:
             band_col = QVBoxLayout()
-            band_col.setSpacing(2)
+            band_col.setSpacing(6)
             lbl_freq = QLabel(name)
-            lbl_freq.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 10px; font-weight: bold;")
+            lbl_freq.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()}; font-size: 11px; font-weight: 600;")
             lbl_freq.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
             sld = QSlider(Qt.Orientation.Vertical)
-            sld.setFixedHeight(60)
+            sld.setFixedHeight(96)
             sld.setRange(-120, 120)
             sld.setValue(0)
             sld.setStyleSheet(
-                "QSlider::groove:vertical { width: 4px; background: #2A2A2A; border-radius: 2px; }"
-                "QSlider::sub-page:vertical { background: #2A2A2A; border-radius: 2px; }"
+                "QSlider::groove:vertical { width: 5px; background: #262630; border-radius: 2px; }"
+                "QSlider::sub-page:vertical { background: #262630; border-radius: 2px; }"
                 "QSlider::add-page:vertical { background: #00FF7F; border-radius: 2px; }"
-                "QSlider::handle:vertical { background: #FFFFFF; border: 1px solid #141414; height: 12px; margin-left: -4px; margin-right: -4px; border-radius: 6px; }"
+                "QSlider::handle:vertical { background: #FFFFFF; border: 1px solid #141414; height: 14px; margin-left: -5px; margin-right: -5px; border-radius: 7px; }"
             )
             sld.valueChanged.connect(self._on_band_slider_changed)
 
             lbl_v = QLabel("0.0")
-            lbl_v.setStyleSheet("color: #8A8A8A; font-size: 9px;")
+            lbl_v.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 10px;")
             lbl_v.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
             band_col.addWidget(lbl_freq)
             band_col.addWidget(sld, 0, Qt.AlignmentFlag.AlignCenter)
             band_col.addWidget(lbl_v)
-            eq_bands_layout.addLayout(band_col)
+            eq_bands_layout.addLayout(band_col, 1)
 
             self.eq_band_sliders.append(sld)
             self.eq_band_labels.append(lbl_v)
 
-        # Direct property accessors for bands
         self.sld_band_60 = self.eq_band_sliders[0]
         self.sld_band_250 = self.eq_band_sliders[1]
         self.sld_band_1000 = self.eq_band_sliders[2]
@@ -971,46 +1209,87 @@ class SettingsDialog(QDialog):
 
         eq_l.addLayout(eq_bands_layout)
         layout_aud.addWidget(eq_box)
-
-        scroll_aud.setWidget(aud_container)
-        layout_aud_root.addWidget(scroll_aud)
+        layout_aud.addStretch(1)
 
         self.stacked_widget.addWidget(page_aud)
 
         # Page 5: About Page
-        page_about = QWidget()
-        layout_about = QVBoxLayout(page_about)
-        layout_about.setContentsMargins(0, 0, 0, 0)
-        layout_about.setSpacing(8)
+        page_about, layout_about = self._create_scrollable_page(
+            "About MediaDock",
+            "Version information, open-source repository link, runtime stack, and quick reference.",
+        )
 
-        lbl_about_title = QLabel("MediaDock", page_about)
-        lbl_about_title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        card_identity, layout_identity = self._create_setting_card(page_about)
+        hdr_about = QHBoxLayout()
+        lbl_about_title = QLabel("MediaDock", card_identity)
+        lbl_about_title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         lbl_about_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()};")
-        layout_about.addWidget(lbl_about_title)
+        hdr_about.addWidget(lbl_about_title)
 
-        lbl_ver = QLabel("Version 1.0.0-rc1", page_about)
-        lbl_ver.setStyleSheet("color: #89B4FA; font-size: 11px; font-weight: bold;")
-        layout_about.addWidget(lbl_ver)
-
-        line_about = QFrame(page_about)
-        line_about.setFrameShape(QFrame.Shape.HLine)
-        line_about.setFrameShadow(QFrame.Shadow.Sunken)
-        line_about.setStyleSheet(f"color: {COLOR_BORDER.name()};")
-        layout_about.addWidget(line_about)
+        lbl_ver = QLabel("Version 1.0.0-rc1", card_identity)
+        lbl_ver.setStyleSheet(
+            "background-color: #1A2421; color: #00FF7F; border: 1px solid #264A3B; border-radius: 10px; padding: 3px 10px; font-size: 11px; font-weight: bold;"
+        )
+        hdr_about.addWidget(lbl_ver)
+        hdr_about.addStretch()
+        layout_identity.addLayout(hdr_about)
 
         lbl_desc = QLabel(
-            "Native Windows desktop media application built with Python 3.14, PySide6 (Qt for Python), and PyWinRT.\n\n"
-            "Features top-center Dynamic Island overlay, Windows GSMTC media session detection, and master volume control.",
-            page_about,
+            "Native Windows top-notch Dynamic Island media controller built with Python, PySide6 (Qt), and WinRT GSMTC.\n"
+            "Includes instant media detection across Spotify, browsers, and desktop players, live synchronized lyrics, "
+            "real-time audio spectrum visualization, Equalizer APO tone controls, and global keyboard shortcuts.",
+            card_identity,
         )
-        lbl_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px;")
+        lbl_desc.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; line-height: 1.45;")
         lbl_desc.setWordWrap(True)
-        layout_about.addWidget(lbl_desc)
-        layout_about.addStretch()
+        layout_identity.addWidget(lbl_desc)
+        layout_about.addWidget(card_identity)
+
+        card_repo, layout_repo = self._create_setting_card(page_about, "Project & GitHub Repository")
+        self.lbl_github_link = QLabel(
+            f'Repository: <a href="{GITHUB_REPO_URL}" style="color: #00FF7F; text-decoration: none;">{GITHUB_REPO_URL}</a>',
+            card_repo,
+        )
+        self.lbl_github_link.setOpenExternalLinks(True)
+        self.lbl_github_link.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        self.lbl_github_link.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()}; font-size: 12px;")
+        layout_repo.addWidget(self.lbl_github_link)
+
+        repo_btn_row = QHBoxLayout()
+        repo_btn_row.setSpacing(10)
+        self.btn_open_github = QPushButton("Open GitHub Repository", card_repo)
+        self.btn_open_github.setFixedHeight(32)
+        self.btn_open_github.setStyleSheet(get_button_stylesheet())
+        self.btn_open_github.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(GITHUB_REPO_URL)))
+
+        self.btn_report_issue = QPushButton("Report an Issue", card_repo)
+        self.btn_report_issue.setFixedHeight(32)
+        self.btn_report_issue.setStyleSheet(get_button_stylesheet())
+        self.btn_report_issue.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(GITHUB_ISSUES_URL)))
+
+        repo_btn_row.addWidget(self.btn_open_github)
+        repo_btn_row.addWidget(self.btn_report_issue)
+        repo_btn_row.addStretch()
+        layout_repo.addLayout(repo_btn_row)
+        layout_about.addWidget(card_repo)
+
+        card_env, layout_env = self._create_setting_card(page_about, "Controls & Runtime Details")
+        py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        lbl_env = QLabel(
+            "• Expand / Collapse: Hover or click the top notch bar (configurable in Dynamic Island).\n"
+            "• Quick Context Menu: Right-click the notch for Settings, Pin, or Hide options.\n"
+            f"• Runtime Stack: Python {py_ver}  |  Qt {QT_RUNTIME_VERSION} (PySide6)  |  Windows GSMTC & Core Audio",
+            card_env,
+        )
+        lbl_env.setStyleSheet(f"color: {COLOR_TEXT_MUTED.name()}; font-size: 11px; line-height: 1.5;")
+        lbl_env.setWordWrap(True)
+        layout_env.addWidget(lbl_env)
+        layout_about.addWidget(card_env)
+        layout_about.addStretch(1)
 
         self.stacked_widget.addWidget(page_about)
 
-        right_layout.addWidget(self.stacked_widget)
+        right_layout.addWidget(self.stacked_widget, 1)
 
         # Connect Sidebar to StackedWidget
         self.sidebar.currentRowChanged.connect(self.stacked_widget.setCurrentIndex)
@@ -1025,13 +1304,43 @@ class SettingsDialog(QDialog):
         btn_style = get_button_stylesheet()
 
         self.btn_cancel = QPushButton("Cancel", self)
-        self.btn_cancel.setFixedSize(80, 28)
-        self.btn_cancel.setStyleSheet(btn_style)
+        self.btn_cancel.setFixedSize(92, 32)
+        self.btn_cancel.setStyleSheet(
+            "QPushButton {"
+            "  background-color: rgba(255, 255, 255, 0.08);"
+            "  color: #FFFFFF;"
+            "  border: 1px solid rgba(255, 255, 255, 0.14);"
+            "  border-radius: 7px;"
+            "  font-weight: 600;"
+            "  font-size: 12px;"
+            "}"
+            "QPushButton:hover {"
+            "  background-color: rgba(255, 255, 255, 0.14);"
+            "}"
+            "QPushButton:pressed {"
+            "  background-color: rgba(255, 255, 255, 0.05);"
+            "}"
+        )
         self.btn_cancel.clicked.connect(self.reject)
 
         self.btn_save = QPushButton("Save", self)
-        self.btn_save.setFixedSize(80, 28)
-        self.btn_save.setStyleSheet(btn_style)
+        self.btn_save.setFixedSize(92, 32)
+        self.btn_save.setStyleSheet(
+            "QPushButton {"
+            "  background-color: rgba(0, 255, 127, 0.16);"
+            "  color: #00FF7F;"
+            "  border: 1px solid rgba(0, 255, 127, 0.42);"
+            "  border-radius: 7px;"
+            "  font-weight: bold;"
+            "  font-size: 12px;"
+            "}"
+            "QPushButton:hover {"
+            "  background-color: rgba(0, 255, 127, 0.26);"
+            "}"
+            "QPushButton:pressed {"
+            "  background-color: rgba(0, 255, 127, 0.12);"
+            "}"
+        )
         self.btn_save.clicked.connect(self.save_settings)
 
         btn_layout.addWidget(self.btn_cancel)
@@ -1051,8 +1360,9 @@ class SettingsDialog(QDialog):
         return self.rec_hotkey_play_pause
 
     def showEvent(self, event) -> None:
-        """Refresh preference controls from SettingsManager upon show event."""
+        """Refresh preference controls and reapply hardware Gaussian blur backdrop on show."""
         super().showEvent(event)
+        self._apply_gaussian_blur_backdrop()
         self.load_settings()
 
     def _on_audio_control_changed(self) -> None:
@@ -1121,6 +1431,46 @@ class SettingsDialog(QDialog):
         self._is_updating_ui = False
         self._on_audio_control_changed()
 
+    def _on_appearance_hex_changed(self) -> None:
+        """Update hex swatch previews live while typing."""
+        if not self._is_updating_ui:
+            self._update_appearance_preview()
+
+    def _reset_appearance_defaults(self) -> None:
+        """Reset appearance hex fields back to #000000 defaults."""
+        self._is_updating_ui = True
+        self.txt_bg_color_hex.setText("#000000")
+        self.txt_border_color_hex.setText("#000000")
+        self.lbl_appearance_error.hide()
+        self._is_updating_ui = False
+        self._update_appearance_preview()
+
+    def _update_appearance_preview(self) -> None:
+        """Refresh color swatches and live notch preview pill from hex fields."""
+        bg_hex = parse_hex_color(self.txt_bg_color_hex.text())
+        border_hex = parse_hex_color(self.txt_border_color_hex.text())
+
+        bg_display = bg_hex if bg_hex else "#000000"
+        border_display = border_hex if border_hex else "#000000"
+
+        self.swatch_bg_preview.setStyleSheet(
+            f"background-color: {bg_display}; border-radius: 7px; border: 1px solid {'#3C3C48' if bg_hex else '#C1121C'};"
+        )
+        self.swatch_border_preview.setStyleSheet(
+            f"background-color: {border_display}; border-radius: 7px; border: 1px solid {'#3C3C48' if border_hex else '#C1121C'};"
+        )
+
+        pill_border = border_display if border_display != "#000000" else "#2E2E36"
+        self.appearance_preview_pill.setStyleSheet(
+            f"background-color: {bg_display}; border: 1.5px solid {pill_border}; border-radius: 16px;"
+        )
+        # Contrast hint so light backgrounds keep readable text in preview
+        bg_qcolor = QColor(bg_display)
+        txt_color = "#111115" if bg_qcolor.lightness() > 165 else "#FFFFFF"
+        self.appearance_preview_title.setStyleSheet(
+            f"color: {txt_color}; font-size: 11px; font-weight: 600; background: transparent; border: none;"
+        )
+
     def load_settings(self) -> None:
         """Load current preference values from SettingsManager into controls."""
         self.chk_close_to_tray.setChecked(self._settings_manager.get_close_to_tray())
@@ -1158,8 +1508,12 @@ class SettingsDialog(QDialog):
             self._settings_manager.get_hotkey_play_pause()
         )
 
-        # Audio & Equalizer Settings
+        # Appearance Hex Colors & Audio Settings
         self._is_updating_ui = True
+        self.txt_bg_color_hex.setText(self._settings_manager.get_notch_bg_color())
+        self.txt_border_color_hex.setText(self._settings_manager.get_notch_border_color())
+        self.lbl_appearance_error.hide()
+
         self.chk_eq_enabled.setChecked(self._settings_manager.get_eq_enabled())
         self.sld_preamp.setValue(int(round(self._settings_manager.get_preamp_boost_db() * 10)))
         self.sld_bass.setValue(int(round(self._settings_manager.get_bass_db() * 10)))
@@ -1182,13 +1536,32 @@ class SettingsDialog(QDialog):
             self.combo_spectrum_mode.setCurrentIndex(spec_idx)
 
         self._is_updating_ui = False
+        self._update_appearance_preview()
         self._on_audio_control_changed()
 
         self.lbl_error.hide()
 
     def save_settings(self) -> None:
-        """Save dialog values to SettingsManager and attempt hotkey rebind."""
-        # 1. ALWAYS save general preferences regardless of hotkey validation
+        """Validate appearance hex codes & hotkeys, persist values, and apply updates."""
+        # 1. Validate Appearance hex color inputs
+        bg_hex = parse_hex_color(self.txt_bg_color_hex.text())
+        border_hex = parse_hex_color(self.txt_border_color_hex.text())
+        if bg_hex is None or border_hex is None:
+            self.lbl_appearance_error.setText(
+                "Please enter valid 6-digit hex color codes (e.g. #000000) for Background and Border."
+            )
+            self.lbl_appearance_error.show()
+            self.sidebar.setCurrentRow(3)  # Switch to Appearance page
+            return
+
+        self.lbl_appearance_error.hide()
+        self._is_updating_ui = True
+        self.txt_bg_color_hex.setText(bg_hex)
+        self.txt_border_color_hex.setText(border_hex)
+        self._is_updating_ui = False
+        self._update_appearance_preview()
+
+        # 2. Persist validated general, dynamic island, appearance, and audio settings
         self._settings_manager.set_close_to_tray(self.chk_close_to_tray.isChecked())
         self._settings_manager.set_start_hidden(self.chk_start_hidden.isChecked())
         self._settings_manager.set_autostart_windows(
@@ -1214,6 +1587,8 @@ class SettingsDialog(QDialog):
         self._settings_manager.set_hover_intent_delay_ms(
             self.spn_hover_intent.value()
         )
+        self._settings_manager.set_notch_bg_color(bg_hex)
+        self._settings_manager.set_notch_border_color(border_hex)
         self._settings_manager.set_spectrum_mode(
             str(self.combo_spectrum_mode.currentData() or "fft")
         )

@@ -1,9 +1,23 @@
 """Settings manager for MediaDock application preferences using Qt-native QSettings."""
 
+import re
 from typing import Any, Optional, Tuple
 from PySide6.QtCore import QObject, QSettings, Signal
 
 from src.utils.autostart import AutostartManager
+
+
+_HEX_COLOR_RE = re.compile(r"^#?([0-9A-Fa-f]{6})$")
+
+
+def parse_hex_color(value: Any) -> Optional[str]:
+    """Validate a 6-digit hex color code (with or without leading '#') and return uppercase '#RRGGBB'."""
+    if not isinstance(value, str):
+        return None
+    match = _HEX_COLOR_RE.match(value.strip())
+    if not match:
+        return None
+    return f"#{match.group(1).upper()}"
 
 
 def _to_bool(value: Any, default: bool) -> bool:
@@ -73,6 +87,8 @@ class SettingsManager(QObject):
         "window/display_monitor": "primary",
         "audio/spectrum_mode": "rms",
         "features/lyrics_enabled": True,
+        "appearance/bg_color": "#000000",
+        "appearance/border_color": "#000000",
     }
 
 
@@ -339,6 +355,28 @@ class SettingsManager(QObject):
     def set_lyrics_enabled(self, enabled: bool) -> None:
         """Set whether synchronized lyrics display is enabled."""
         self.set("features/lyrics_enabled", bool(enabled))
+
+    def get_notch_bg_color(self) -> str:
+        """Return configured notch background hex color (#RRGGBB)."""
+        parsed = parse_hex_color(self.get("appearance/bg_color"))
+        return parsed if parsed is not None else "#000000"
+
+    def set_notch_bg_color(self, hex_color: str) -> None:
+        """Set notch background hex color (#RRGGBB); ignores invalid color codes."""
+        parsed = parse_hex_color(hex_color)
+        if parsed is not None:
+            self.set("appearance/bg_color", parsed)
+
+    def get_notch_border_color(self) -> str:
+        """Return configured notch border hex color (#RRGGBB)."""
+        parsed = parse_hex_color(self.get("appearance/border_color"))
+        return parsed if parsed is not None else "#000000"
+
+    def set_notch_border_color(self, hex_color: str) -> None:
+        """Set notch border hex color (#RRGGBB); ignores invalid color codes."""
+        parsed = parse_hex_color(hex_color)
+        if parsed is not None:
+            self.set("appearance/border_color", parsed)
 
     def sync(self) -> None:
         """Synchronize in-memory settings to persistent QSettings storage."""

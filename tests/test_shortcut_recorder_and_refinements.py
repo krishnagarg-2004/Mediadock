@@ -2,7 +2,7 @@
 
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtGui import QColor, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import QApplication
@@ -155,7 +155,8 @@ class TestShortcutRecorderAndRefinements(unittest.TestCase):
         plus_texts = [w.text() for w in labels if isinstance(w, QLabel) and w.text() == "+"]
         self.assertEqual(len(plus_texts), 2)  # Two '+' signs for 3 keys (Ctrl + Shift + M)
 
-    def test_general_settings_persisted_even_if_hotkey_rebind_fails(self) -> None:
+    @patch("src.utils.autostart.winreg")
+    def test_general_settings_persisted_even_if_hotkey_rebind_fails(self, mock_winreg: MagicMock) -> None:
         """Verify general settings (such as collapse delay) are saved even if hotkey rebind fails."""
         mock_hotkey_mgr = MagicMock()
         mock_hotkey_mgr.rebind_hotkeys.return_value = False  # Simulate registration failure

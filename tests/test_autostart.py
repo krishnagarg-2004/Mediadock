@@ -98,15 +98,30 @@ class TestAutostartManager(unittest.TestCase):
 
     def test_startup_command_development_vs_packaged(self) -> None:
         """Verify get_startup_command formatting in development vs frozen execution."""
-        # 1. Development environment
-        cmd_dev = AutostartManager.get_startup_command()
-        self.assertIn(sys.executable, cmd_dev)
-        self.assertIn("--minimized", cmd_dev)
+        # 1. Development environment (resists arbitrary sys.argv[0] paths)
+        with patch.object(sys, "argv", ["C:\\Windows\\System32\\unrelated.py"]):
+            cmd_dev = AutostartManager.get_startup_command()
+            self.assertIn(sys.executable, cmd_dev)
+            self.assertIn("main.py", cmd_dev)
+            self.assertIn("--minimized", cmd_dev)
 
         # 2. PyInstaller packaged environment simulation
         with patch.object(sys, "frozen", True, create=True), patch.object(sys, "executable", "C:\\Program Files\\MediaDock\\MediaDock.exe"):
             cmd_pkg = AutostartManager.get_startup_command()
             self.assertEqual(cmd_pkg, '"C:\\Program Files\\MediaDock\\MediaDock.exe" --minimized')
+
+    @patch("src.utils.autostart.winreg")
+    def test_reconcile_restores_registry_when_enabled(self, mock_winreg: MagicMock) -> None:
+        """Verify AutostartManager.reconcile(True) ensures the Windows Run registry key is populated."""
+        mock_key = MagicMock()
+        mock_winreg.OpenKey.return_value.__enter__.return_value = mock_key
+
+        self.assertTrue(AutostartManager.reconcile(True))
+        mock_winreg.SetValueEx.assert_called_once()
+
+        mock_winreg.reset_mock()
+        self.assertTrue(AutostartManager.reconcile(False))
+        mock_winreg.SetValueEx.assert_not_called()
 
     # --- SettingsManager Integration Tests ---
 

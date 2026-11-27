@@ -24,18 +24,14 @@ MediaDock integrates with any media application exposing the Windows GSMTC API:
 
 ## 2. Product Vision & Visual Design Language
 
-- **Fixed System Visual Identity**: Pure Black (`#000000`) background and border, dark charcoal (`#141414` – `#222222`) secondary surfaces, subtle dark gray (`#2A2A2A`) borders, white (`#FFFFFF`) primary text, and muted gray (`#8A8A8A`) secondary text.
-- **Status Indicators**:
-  - **ACTIVE / PLAYING**: Spring Green (`#00FF7F`)
-  - **INACTIVE / PAUSED / STOPPED / CLOSED**: Crimson Red (`#C1121C`)
-- **Non-Customizable Product Colors**: The Dynamic Island background (`#000000`), border (`#000000`), and status dot colors are fixed by the product visual identity.
-- **Silent Background Operation**: Starts with Windows (or on demand) silently in the background, listening for media sessions without requiring user intervention.
+- **Visual Identity & Hex Customization**: Obsidian Black (`#000000`) default shell and border, dark charcoal (`#141414` – `#222222`) secondary surfaces, subtle dark gray (`#2A2A2A`) borders, white (`#FFFFFF`) primary text, and muted gray (`#8A8A8A`) secondary text. Users can customize the Dynamic Island **Background** and **Border** colors directly using 6-digit hex color codes (`#RRGGBB`) in Settings -> Appearance (with activity status colors removed).
+- **Silent Background Operation**: Starts with Windows (or on demand) cleanly in the background via `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, automatically reconciling startup entries and listening for media sessions without requiring user intervention.
 
 ---
 
-## 3. Top-Center Notch Screen Architecture & State Model
+## 3. Top-Center Notch & Expanded Oval Architecture
 
-MediaDock presents a top-center, non-draggable overlay anchored flush against the top edge of the primary monitor (`y = 0`), styled as a sleek native display notch.
+MediaDock presents a hybrid top-center overlay: a **flush top-bezel Notch** (`y = 0` with `8px` concave flared ears) when collapsed, morphing cleanly into a floating **Oval Expanded Card** (`y = 12` with `32px` rounded corners) on hover or click.
 
 ```
                     ┌──────────────┐
@@ -45,18 +41,18 @@ MediaDock presents a top-center, non-draggable overlay anchored flush against th
                      Media detected
                            │
                            ▼
-              ┌──────────────────────────────┐  (Flush with top bezel + 8px flared ears)
-              │       COLLAPSED NOTCH        │  (DeskNotch Slim Bar 220x34 px, 14px radius)
-              │ [Art] Title   ▌▌▌ 12:45 ●    │  (Album thumb, pulse, 12h clock, status dot)
+              ┌──────────────────────────────┐  (Flush bezel notch y = 0, 8px flared ears)
+              │       COLLAPSED NOTCH        │  (220x34 px, 14px bottom radius)
+              │ [Art] Title       ▌▌▌ 12:45  │  (Album thumb, pulse, 12h clock)
               └──────────────┬───────────────┘
                              │
                    Hover / Click Trigger
                              │
                              ▼
-              ┌──────────────────────────────┐  (Flared 10px ears, 26px bottom radius)
-              │       EXPANDED NOTCH         │  (DeskNotch Frosted Card 380x174 px)
+              ╭──────────────────────────────╮  (Floating at y = 12, 32px oval corners)
+              │       EXPANDED OVAL          │  (Frosted Glass Card 410x178 px / 410x216 w/ lyrics)
               │  [92px Art] Meta / ⚪ Play   │  (Ambient radial cover glow + Pin/Settings dock)
-              └──────────────┬───────────────┘
+              ╰──────────────┬───────────────╯
                              │
                    Mouse leaves (unless Pinned)
                              │
@@ -68,7 +64,7 @@ MediaDock presents a top-center, non-draggable overlay anchored flush against th
               └──────────────────────────────┘
 ```
 
-- **DeskNotch Chassis & Symmetrical Geometry Morphing**: Authentic top concave flared "ear" curves (`8px` closed / `10px` open) seamlessly joining the display top bezel, with layered frosted glass sheen, ambient radial cover-art glow, and smooth 180ms `OutCubic` morphing around a constant center X coordinate (`220x34` notch $\leftrightarrow$ `380x174` expanded card) with zero position drift.
+- **Hybrid Notch-to-Oval Morphing**: Flush top-bezel collapsed notch (`220x34`, `14px` bottom radius, `8px` top flared ears at `y = 0`) morphing cleanly via 180ms `OutCubic` animation into the `32px`-radius floating oval expanded card (`410x178` at `y = 12`, expanding cleanly to `410x216` when synchronized lyrics display) around a constant center X coordinate with zero position drift.
 - **Hover Expansion & Inactivity Collapse**: Mouse hover on the notch immediately triggers downward expansion; mouse leave starts a configurable single-shot timer (default `3500ms`, adjustable 500–30000ms in settings) before auto-collapsing.
 - **Notch Source Classification**: Dynamically identifies the active source app and renders crisp vector icons (`spotify.svg`, `youtube.svg`, `vlc.svg`, or `default_media.svg`) alongside elided track metadata.
 
@@ -97,15 +93,15 @@ MediaDock presents a top-center, non-draggable overlay anchored flush against th
 - **Native Event Filtering**: `HotkeyNativeEventFilter` intercepts `WM_HOTKEY` (0x0312) messages safely handling PySide6 Shiboken `VoidPtr` objects.
 - **Interactive Shortcut Recorder**: `ShortcutRecorderWidget` in settings captures keyboard input directly with strict 2-key and 3-key rules, duplicate assignment detection, and automatic rollback if OS registration fails.
 
-### 4.4 Landscape Preferences UI & Persistence
-- **Modern Landscape Dialog**: `680x440` px window with a 160px persistent left navigation sidebar and 6 stacked pages:
-  1. **Preferences**: Close to tray, Start minimized, Start with Windows (Registry `HKCU\...Run`), Always on Top, Enable Dynamic Island (Top Notch), Auto-Hide in Fullscreen Games & Apps, Live Synchronized Lyrics, Target Display Monitor selector.
-  2. **Global Shortcuts**: Interactive shortcut recorders for Show/Hide and Play/Pause.
+### 4.4 Spacious Frosted Gaussian-Blur Preferences UI & Persistence
+- **Modern Gaussian Blur Card Dialog**: `820x600` px resizable frosted glass window (`780x560` minimum, Windows 11 DWM Acrylic Gaussian Blur with Windows 10 `SetWindowCompositionAttribute` fallback and translucent glass cards) with a `185px` left navigation sidebar and 6 scrollable, card-grouped stacked pages:
+  1. **Preferences**: Grouped into Startup & System Tray, Window & Display, and Media Experience cards (Start with Windows, Start Minimized, Close to Tray, Always on Top, Enable Dynamic Island, Fullscreen Auto-Hide, Target Display Monitor selector, Live Synchronized Lyrics).
+  2. **Global Shortcuts**: Interactive shortcut recorders for Show/Hide and Play/Pause plus shortcut guidelines.
   3. **Dynamic Island**: Expansion Trigger (*Hover to Expand* vs *Click to Expand*), Hover Intent Delay (`0–1000 ms`), and Collapse Delay via `CollapseDelaySpinBox` (`500–30000 ms`).
-  4. **Appearance**: Fixed system visual identity overview.
+  4. **Appearance**: Custom hex color code (`#RRGGBB`) inputs with live swatches, Reset Default (`#000000`), and live notch preview for Background and Border colors.
   5. **Audio**: Equalizer APO status, Visualizer Spectrum Mode (*True FFT Frequency Spectrum* vs *Time-Domain RMS Energy*), Audio Boost (Preamp), tone controls (bass, clarity, treble, noise gate), and 5-band graphic equalizer with presets.
-  6. **About**: Version information and architectural summary.
-- **`SettingsManager`**: Backed by Qt `QSettings` INI storage with explicit synchronization on save and system tray exit.
+  6. **About**: Version badge, feature overview, clickable GitHub repository & issue links (`https://github.com/krishnagarg-2004/Mediadock`), and runtime/shortcut quick reference.
+- **`SettingsManager`**: Backed by Qt `QSettings` store with explicit synchronization on save and system tray exit, plus startup `AutostartManager.reconcile()` verification.
 - **Single-Instance Protection**: Enforced via `SingleInstanceGuard` local socket IPC, ensuring only one instance runs and restoring the existing window on secondary launches.
 
 ---
@@ -129,7 +125,7 @@ python -m src.main
 ```
 
 ### Run Automated Test Suite
-MediaDock includes a comprehensive unit and integration test suite (295 tests covering core models, state machine, DeskNotch UI chassis, audio analysis, hotkeys, Equalizer APO, lyrics, and widget lifecycle):
+MediaDock includes a comprehensive unit and integration test suite (305 tests covering core models, state machine, notch/oval UI chassis, audio analysis, hotkeys, Equalizer APO, lyrics, hex appearance customization, Gaussian-blur Settings UI, startup reconciliation, and widget lifecycle):
 ```cmd
 .venv\Scripts\python.exe -m unittest discover -s tests
 ```
@@ -183,14 +179,15 @@ Output artifact: `dist/MediaDock.exe`.
   11. *Live Synchronized Lyrics Preview*: Async LRCLIB lyrics client and live timeline-synced lyric line.
   (**286 / 286 tests passing**).
 - **DeskNotch UI & Visibility Stability Milestone (COMPLETE)**: Transformed MediaDock's UI to match DeskNotch's obsidian glass aesthetic (`220x34` slim bar $\leftrightarrow$ `380x174` expanded notch with `8px`/`10px` top concave flared bezel ears, `14px`/`26px` bottom corner radii, left-centered radial cover glow, frosted media tile with `92x92` rounded `12px` artwork, uppercase player badge + 3-bar pulse + 12h clock, signature solid white circular Play/Pause disc with black glyph, and integrated Pin/Lock + Settings dock buttons), fixed Win32 DPI-aware fullscreen detection (`IsZoomed` / `WS_CAPTION` exclusion + `GetMonitorInfoW`), added `HWND_TOPMOST` Z-order promotion, and isolated test settings (**295 / 295 tests passing**).
+- **Startup Reliability, Frosted Gaussian-Blur Settings UI & Hex Appearance Milestone (COMPLETE)**: Fixed Windows startup registration (`AutostartManager.reconcile`, `src/main.py` root `sys.path`/CWD normalization, delayed tray visibility retries for Explorer boot timing, and QSettings/winreg isolation across tests), overhauled `SettingsDialog` into a resizable frosted Gaussian-blur glass workspace (`820x600`, `780x560` minimum, Win11 DWM Acrylic backdrop + Win10 fallback, translucent glass cards), added hex-code (`#RRGGBB`) customization for notch Background & Border with live preview (status colors removed), removed collapsed status dot, placed full-width synchronized lyrics cleanly outside `#MediaTile` so transport buttons remain aligned inside the card, restored flush top-bezel collapsed notch (`y = 0`, `14px` bottom radius, `8px` ears) while preserving the floating oval expanded card (`32px` radius at `y = 12`), and enriched About with clickable GitHub repository links (**305 / 305 tests passing**).
 
 ### Implemented Codebase vs Target Specification Matrix
 
 | Feature / Component | Current Implementation Codebase | Target V1 Specification Status |
 | :--- | :--- | :--- |
 | **Application Launch Stability** | Verified (`python -m src.main` and `dist/MediaDock.exe` launch with 0 errors) | Complete |
-| **DeskNotch Chassis & Bezel Ears** | Implemented (Flush `y = 0`, top flared concave ears, frosted top sheen, `220x34` / `380x174` card) | Complete |
-| **DeskNotch Media Tile & Controls**| Implemented (Solid white `#FFFFFF` Play/Pause disc, rounded `92x92` art, Pin/Lock & Settings dock) | Complete |
+| **Hybrid Notch & Oval Chassis** | Implemented (Flush `y = 0` collapsed notch `220x34` with `8px` ears & `14px` bottom radius; floating `y = 12` oval expanded card `410x178` / `410x216` with `32px` corners) | Complete |
+| **DeskNotch Media Tile & Controls**| Implemented (`#MediaTile` card with solid white `#FFFFFF` Play/Pause disc, rounded `92x92` art, Pin/Lock & Settings dock, and full-width bottom lyrics strip) | Complete |
 | **Dynamic Album Art Glow** | Implemented (Ambient radial cover glow centered behind artwork, tinted visualizer and sliders) | Complete |
 | **Interactive Progress Scrubbing** | Implemented (`InteractiveScrubSlider` click-to-seek, smooth drag, live timestamp tooltip) | Complete |
 | **Mirrored Waveform Visualizer** | Implemented (`ReactiveVisualizerWidget(mirrored=True)` symmetrical vertical bar expansion) | Complete |
@@ -213,12 +210,13 @@ Output artifact: `dist/MediaDock.exe`.
 | **5-Band Graphic Equalizer** | Implemented (60Hz, 250Hz, 1kHz, 4kHz, 16kHz sliders, 6 presets, Flat reset) | Complete |
 | **Global Win32 Hotkey Dispatch** | Implemented (HWND message target, Shiboken VoidPtr fix, `Ctrl+Alt+S` / `Ctrl+Alt+Space`) | Complete |
 | **Global Shortcut Recorder UI** | Implemented (`ShortcutRecorderWidget` interactive keycap pills with `+` labels, 2/3-key validation, rollback) | Complete |
-| **Landscape Settings UI & Sidebar** | Implemented (`680x440` px window, 160px sidebar, 6 pages, dark charcoal selected panel, no focus outline) | Complete |
-| **Fixed Visual Identity System** | Implemented (Pure Black `#000000` BG/border, `#00FF7F` active green, `#C1121C` inactive red, non-customizable product colors) | Complete |
+| **Frosted Gaussian-Blur Settings UI** | Implemented (`820x600` resizable Win11 DWM Acrylic / Win10 Composition frosted glass window, `185px` sidebar, 6 scrollable card-grouped pages, GitHub-linked About tab) | Complete |
+| **Custom Hex Appearance System** | Implemented (User-configurable `#RRGGBB` hex Background & Border with live preview & Reset Default) | Complete |
+| **Windows Startup Reconciliation** | Implemented (`AutostartManager.reconcile()` HKCU registry path normalization, root `sys.path`/CWD guard, delayed Explorer tray sync) | Complete |
 
 ### Verification & Release Summary
 - **Source Launch Status**: `python -m src.main` -> **SUCCESSFUL**
-- **Automated Test Suite**: **295 / 295 tests passing** cleanly (`.venv\Scripts\python.exe -m unittest discover -s tests`).
+- **Automated Test Suite**: **305 / 305 tests passing** cleanly (`.venv\Scripts\python.exe -m unittest discover -s tests`).
 - **Whitespace & Formatting**: `git diff --check` clean (0 errors).
 - **Standalone Executable Build**: `MediaDock.spec` PyInstaller build completed cleanly (`dist/MediaDock.exe`).
 
@@ -227,14 +225,14 @@ Output artifact: `dist/MediaDock.exe`.
 ## 7. Multi-Phase Roadmap
 
 - **V1 & DeskNotch Baseline (Current - Complete)**:
-  - DeskNotch-inspired top-center notch screen (`220x34` slim bar with concave bezel ears flush at `y = 0` $\leftrightarrow$ `380x174` frosted glass card).
+  - Hybrid top-center notch (`220x34` flush bar with `8px` concave bezel ears & `14px` bottom corners at `y = 0` $\leftrightarrow$ `410x178` / `410x216` floating oval glass card with `32px` corners at `y = 12`).
   - Ambient album-art radial glow, mirrored waveform visualizer, interactive scrub slider with timestamp tooltip, Pin/Lock & Settings dock buttons.
   - Symmetrical 180ms `OutCubic` morphing with zero position drift and HWND_TOPMOST Z-order promotion.
   - GSMTC universal media detection, multi-session switcher pill, shuffle & repeat toggles, and async LRCLIB synchronized lyrics.
   - CoreAudio master/app volume control, WASAPI loopback capture, pure-Python Radix-2 FFT frequency spectrum & RMS energy analyzer.
   - Equalizer APO integration: Audio boost (+12 dB preamp), quick tone controls, and 5-band graphic EQ with dynamic visualizer coupling.
   - DPI-safe Win32 fullscreen game/video auto-hide, multi-monitor anchoring, Win32 global hotkeys with interactive 2/3-key recorder UI.
-  - Single-instance IPC guard, autostart integration, **295/295 test coverage**, and standalone PyInstaller build.
+  - Frosted Gaussian-blur Preferences dialog (`Appearance` hex customization, GitHub-linked `About` page), single-instance IPC guard, verified Windows startup reconciliation, **305/305 test coverage**, and standalone PyInstaller build.
 
 - **V2 (Future Productivity & Desk Integration)**:
   - Focus/Pomodoro countdown timer & micro-task strip inside expanded notch.

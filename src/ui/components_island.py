@@ -13,8 +13,6 @@ from src.ui.theme import (
     COLOR_BG_ISLAND,
     COLOR_BORDER_ISLAND,
     COLOR_NOTCH_BORDER,
-    COLOR_STATUS_ACTIVE,
-    COLOR_STATUS_INACTIVE,
     COLOR_ACCENT_BLUE,
     create_rounded_pixmap,
     get_svg_pixmap,
@@ -163,7 +161,7 @@ def classify_media_source(source_name: str, title: str = "", artist: str = "") -
 
 
 class CollapsedNotchWidget(QWidget):
-    """DeskNotch-inspired slim collapsed notch screen (220x34 px, top flared ears, 14px bottom radius)."""
+    """Flush top-bezel DeskNotch collapsed notch bar (220x34 px, top flared ears, 14px bottom radius)."""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -184,7 +182,7 @@ class CollapsedNotchWidget(QWidget):
         self._update_clock()
 
     def _init_ui(self) -> None:
-        """Initialize compact DeskNotch bar centered horizontally and vertically."""
+        """Initialize compact notch bar centered horizontally and vertically."""
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 4, 16, 4)
         layout.setSpacing(6)
@@ -203,7 +201,7 @@ class CollapsedNotchWidget(QWidget):
         self.title_label.setStyleSheet("color: #FFFFFF;")
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # Right Column: Miniature 3-bar Equalizer Pulse + 12h Clock + Status Dot
+        # Right Column: Miniature 3-bar Equalizer Pulse + 12h Clock
         self.pulse_bars = ReactiveVisualizerWidget(
             bar_count=3, bar_color=QColor(255, 255, 255, 200), mirrored=False, parent=self
         )
@@ -215,15 +213,12 @@ class CollapsedNotchWidget(QWidget):
         self.clock_label.setStyleSheet("color: rgba(255, 255, 255, 0.55);")
         self.clock_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        self.status_dot = QLabel(self)
-        self.status_dot.setFixedSize(8, 8)
         self.set_playback_status(PlaybackStatus.CLOSED)
 
         layout.addWidget(self.icon_label, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self.title_label, 1, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self.pulse_bars, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self.clock_label, 0, Qt.AlignmentFlag.AlignVCenter)
-        layout.addWidget(self.status_dot, 0, Qt.AlignmentFlag.AlignVCenter)
 
     def _update_clock(self) -> None:
         """Update compact 12-hour clock label (e.g. 9:41)."""
@@ -299,21 +294,9 @@ class CollapsedNotchWidget(QWidget):
             self.pulse_bars.set_bar_heights(bars[:3])
 
     def set_playback_status(self, status: Union[PlaybackStatus, str]) -> None:
-        """Update status dot color indicator and 3-bar pulse active state."""
-        status_str = status.value if isinstance(status, PlaybackStatus) else str(status)
-        status_upper = status_str.upper()
-
-        if status_upper == "PLAYING":
-            color_hex = COLOR_STATUS_ACTIVE.name()
-        else:
-            color_hex = COLOR_STATUS_INACTIVE.name()
-
+        """Forward playback status to the 3-bar miniature visualizer pulse indicator."""
         if hasattr(self, "pulse_bars"):
             self.pulse_bars.set_playback_status(status)
-
-        self.status_dot.setStyleSheet(
-            f"background-color: {color_hex}; border-radius: 4px;"
-        )
 
     def set_accent_color(self, color: QColor) -> None:
         """Update capsule accent tint color."""
@@ -322,8 +305,16 @@ class CollapsedNotchWidget(QWidget):
             self.pulse_bars.set_bar_color(color)
         self.update()
 
+    def set_appearance_colors(self, bg_color: QColor, border_color: QColor) -> None:
+        """Update collapsed notch background and border colors from QColor instances."""
+        if isinstance(bg_color, QColor) and bg_color.isValid():
+            self._bg_color = QColor(bg_color)
+        if isinstance(border_color, QColor) and border_color.isValid():
+            self._border_color = QColor(border_color)
+        self.update()
+
     def paintEvent(self, event) -> None:
-        """Paint DeskNotch flared-ear obsidian glass bar."""
+        """Paint flush top-bezel DeskNotch flared-ear obsidian glass bar."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -338,11 +329,15 @@ class CollapsedNotchWidget(QWidget):
         sheen.setColorAt(1.0, QColor(255, 255, 255, 0))
         painter.fillPath(path, sheen)
 
-        pen_inner = QPen(COLOR_NOTCH_BORDER, 1.0)
-        painter.setPen(pen_inner)
-        painter.drawPath(build_desknotch_path(rect.adjusted(1.0, 0.0, -1.0, -1.0), bottom_radius=13.0, ear_radius=8.0))
+        if self._border_color == COLOR_BORDER_ISLAND:
+            pen_inner = QPen(COLOR_NOTCH_BORDER, 1.0)
+            painter.setPen(pen_inner)
+            painter.drawPath(build_desknotch_path(rect.adjusted(1.0, 0.0, -1.0, -1.0), bottom_radius=13.0, ear_radius=8.0))
+            pen_width = 1.0
+        else:
+            pen_width = 1.5
 
-        pen = QPen(self._border_color, 1.0)
+        pen = QPen(self._border_color, pen_width)
         painter.setPen(pen)
         painter.drawPath(path)
         painter.end()

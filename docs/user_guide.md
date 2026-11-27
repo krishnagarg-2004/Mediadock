@@ -44,19 +44,19 @@ Welcome to **MediaDock**! This guide covers installing, configuring, and operati
 
 ## 3. Using MediaDock
 
-### 3.1 Top-Center DeskNotch Interface
-MediaDock anchors flush against the top edge of your screen (`y = 0`) and remains hidden until an active media session (Spotify, Chrome/YouTube, Edge, VLC, etc.) is detected:
+### 3.1 Top-Center Notch & Oval Interface
+MediaDock stays hidden until an active media session (Spotify, Chrome/YouTube, Edge, VLC, etc.) is detected, then presents a hybrid top-center overlay:
 
 - **Collapsed Slim Notch (`220×34` px)**:
-  - Displays rounded miniature album artwork (or source vector icon), elided track title, a 3-bar reactive pulse, a 12-hour tabular clock, and a status indicator dot (`#00FF7F` playing / `#C1121C` paused).
-- **Expanded Frosted Card (`380×174` px)**:
-  - Hover over (or click, depending on your trigger setting) the notch to expand smoothly downward into the frosted card with an ambient cover-art glow:
+  - Anchored flush against the top screen bezel (`y = 0`) with `8px` flared top ears and `14px` bottom corners. Displays rounded miniature album artwork (or source vector icon), elided track title, a 3-bar reactive pulse, and a 12-hour tabular clock.
+- **Expanded Oval Frosted Card (`410×178` px, or `410×216` px with lyrics)**:
+  - Hover over (or click, depending on your trigger setting) the notch to expand smoothly downward into a floating oval card (`y = 12`, `32px` corners) with an ambient cover-art glow:
     - **Play / Pause**: Click the central solid white circular play/pause disc.
     - **Previous / Next / Shuffle / Repeat**: Full transport controls alongside the mirrored reactive spectrum visualizer.
     - **Volume & Mute**: Adjust volume or click the speaker button to mute.
     - **Interactive Progress Scrubbing**: Click anywhere or drag along the progress bar (with live timestamp tooltip) to seek to that timestamp.
     - **Multi-Session Switcher**: When multiple players are active at once, use the header dropdown pill to switch which app MediaDock controls.
-    - **Live Synchronized Lyrics**: View time-synced lyric lines (`♪ ...`) beneath the artist name when enabled.
+    - **Live Synchronized Lyrics**: View time-synced lyric lines (`♪ ...`) in a dedicated full-width strip underneath the media tile when enabled.
     - **Pin / Lock (`🔓`/`🔒`) & Settings (`⚙`) Dock**: Pin the notch open so it stays visible after moving the cursor away, or open Settings in one click.
 
 ### 3.2 System Tray Operation
@@ -67,15 +67,17 @@ MediaDock runs in the Windows System Tray (notification area):
 
 ---
 
-## 4. Preferences, Equalizer & Global Hotkeys
+## 4. Preferences, Appearance, Equalizer & Global Hotkeys
 
-Open **Settings** via the notch gear button or by right-clicking the System Tray icon:
+Open the frosted Gaussian-blur **Settings** window (`820×600` px) via the notch gear button or by right-clicking the System Tray icon:
 
 - **Preferences**: Close to tray, Start minimized, Start with Windows, Always on Top, Enable Dynamic Island, Auto-Hide in Fullscreen Games & Apps, Live Synchronized Lyrics, and Target Display Monitor.
 - **Global Shortcuts**: Customize OS-wide shortcuts for **Show/Hide MediaDock** (default: `Ctrl+Alt+S`) and **Toggle Play/Pause** (default: `Ctrl+Alt+Space`).
   - Supports 2-key or 3-key combinations (`Ctrl`, `Alt`, `Shift`, `Win` + `A-Z`, `0-9`, `Space`, `Tab`, `Return`, `F1-F24`).
 - **Dynamic Island**: Configure **Expansion Trigger** (*Hover to Expand* or *Click to Expand*), **Hover Intent Delay** (`0–1000 ms`), and **Collapse Delay** (`500–30000 ms`).
+- **Appearance**: Customize the notch **Background** and **Border** colors using 6-digit `#RRGGBB` hex color codes with live swatches, real-time preview, and **Reset Default** (`#000000`).
 - **Audio & Equalizer**: Choose **Visualizer Spectrum Mode** (*True FFT Frequency Spectrum* or *Time-Domain RMS Energy*), adjust Preamp Volume Boost (`0` to `+12 dB`), Bass/Clarity/Treble tone controls, Noise Gate (`0%–50%`), and the 5-band graphic EQ with presets.
+- **About**: View version details, clickable GitHub repository/issue links, and runtime shortcut summary.
 
 ---
 

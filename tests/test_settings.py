@@ -2,11 +2,11 @@
 
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from PySide6.QtCore import QObject, QSettings
 from PySide6.QtWidgets import QApplication
 
-from src.core.settings import SettingsManager
+from src.core.settings import SettingsManager, parse_hex_color
 
 
 class TestSettingsManager(unittest.TestCase):
@@ -154,7 +154,8 @@ class TestSettingsManager(unittest.TestCase):
         win.closeEvent(evt2)
         self.assertTrue(evt2.isAccepted())
 
-    def test_preferences_persist_across_tray_exit_and_relaunch(self) -> None:
+    @patch("src.utils.autostart.winreg")
+    def test_preferences_persist_across_tray_exit_and_relaunch(self, mock_winreg: MagicMock) -> None:
         """Verify non-default preferences persist cleanly across application tray exit simulation and fresh launch."""
         from src.ui.settings_dialog import SettingsDialog
         from src.ui.main_window import MainWindow
@@ -246,6 +247,27 @@ class TestSettingsManager(unittest.TestCase):
         self.assertTrue(self.settings.get_lyrics_enabled())
         self.settings.set_lyrics_enabled(False)
         self.assertFalse(self.settings.get_lyrics_enabled())
+
+    def test_appearance_hex_color_settings_and_normalization(self) -> None:
+        """Verify background/border hex color defaults, validation, and normalization."""
+        self.assertEqual(self.settings.get_notch_bg_color(), "#000000")
+        self.assertEqual(self.settings.get_notch_border_color(), "#000000")
+
+        self.assertEqual(parse_hex_color("1a2b3c"), "#1A2B3C")
+        self.assertEqual(parse_hex_color("#00ff7f"), "#00FF7F")
+        self.assertIsNone(parse_hex_color("#123"))
+        self.assertIsNone(parse_hex_color("not-hex"))
+
+        self.settings.set_notch_bg_color("10141c")
+        self.settings.set_notch_border_color("#00ff7f")
+        self.assertEqual(self.settings.get_notch_bg_color(), "#10141C")
+        self.assertEqual(self.settings.get_notch_border_color(), "#00FF7F")
+
+        # Invalid strings must not overwrite stored colors
+        self.settings.set_notch_bg_color("invalid")
+        self.settings.set_notch_border_color("#GGG")
+        self.assertEqual(self.settings.get_notch_bg_color(), "#10141C")
+        self.assertEqual(self.settings.get_notch_border_color(), "#00FF7F")
 
 
 if __name__ == "__main__":

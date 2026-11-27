@@ -1,9 +1,11 @@
 """Unit tests for src/ui/hotkeys.py GlobalHotkeyManager, parse_key_sequence, and SettingsDialog hotkey integration."""
 
+import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
-from PySide6.QtCore import QCoreApplication
+from PySide6.QtCore import QCoreApplication, QSettings
 
 from src.core.settings import SettingsManager
 from src.ui.settings_dialog import SettingsDialog
@@ -203,10 +205,24 @@ class TestGlobalHotkeyManager(unittest.TestCase):
 class TestHotkeySettingsIntegration(unittest.TestCase):
     """Test suite for SettingsManager hotkey persistence and SettingsDialog integration."""
 
+    def setUp(self) -> None:
+        """Create an isolated temporary INI QSettings store for each test."""
+        self.tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".ini")
+        self.tmp_file.close()
+        self.qs = QSettings(self.tmp_file.name, QSettings.Format.IniFormat)
+        self.sm = SettingsManager(qsettings=self.qs)
+
+    def tearDown(self) -> None:
+        """Remove temporary INI file after each test."""
+        if hasattr(self, "tmp_file") and os.path.exists(self.tmp_file.name):
+            try:
+                os.unlink(self.tmp_file.name)
+            except OSError:
+                pass
+
     def test_settings_manager_hotkey_defaults_and_accessors(self) -> None:
         """Verify SettingsManager provides default hotkey values and accessors."""
-        sm = SettingsManager()
-        sm.clear()
+        sm = self.sm
 
         self.assertEqual(sm.get_hotkey_show_hide(), "Ctrl+Alt+S")
         self.assertEqual(sm.get_hotkey_play_pause(), "Ctrl+Alt+Space")
@@ -217,17 +233,17 @@ class TestHotkeySettingsIntegration(unittest.TestCase):
         self.assertEqual(sm.get_hotkey_show_hide(), "Ctrl+Shift+S")
         self.assertEqual(sm.get_hotkey_play_pause(), "Ctrl+Shift+P")
 
+    @patch("src.utils.autostart.winreg")
     @patch("ctypes.windll")
     def test_settings_dialog_failed_rebind_shows_error_and_prevents_persistence(
-        self, mock_windll: MagicMock
+        self, mock_windll: MagicMock, mock_winreg: MagicMock
     ) -> None:
         """Verify SettingsDialog displays error and avoids persisting broken hotkey settings on failed rebind."""
         mock_user32 = MagicMock()
         mock_user32.RegisterHotKey.return_value = 0
         mock_windll.user32 = mock_user32
 
-        sm = SettingsManager()
-        sm.clear()
+        sm = self.sm
         hk_manager = GlobalHotkeyManager()
 
         dialog = SettingsDialog(settings_manager=sm, hotkey_manager=hk_manager)

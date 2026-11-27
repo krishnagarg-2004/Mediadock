@@ -35,11 +35,11 @@ graph TD
     end
 
     subgraph "UI Layer (src/ui)"
-        FramelessWindow["FramelessWindow\n(DeskNotch Concave Ears & Glass Shell)"]
-        MainWindow["MainWindow\n(Expanded 380x174 / Collapsed 220x34 Notch)"]
+        FramelessWindow["FramelessWindow\n(Flush Notch Ears & Floating Oval Shell)"]
+        MainWindow["MainWindow\n(Expanded 410x178 Oval / Collapsed 220x34 Notch)"]
         Visualizer["ReactiveVisualizerWidget\n(Real-Time Mirrored FFT/RMS Waveform)"]
         SystemTrayIcon["SystemTrayIcon\n(Tray Menu & Source Selector)"]
-        SettingsDialog["SettingsDialog\n(Preferences & Equalizer UI)"]
+        SettingsDialog["SettingsDialog\n(Frosted Gaussian Blur Preferences & Equalizer UI)"]
         HotkeyMgr["GlobalHotkeyManager\n(Parsing, Rebinding & Rollback)"]
     end
 
@@ -97,13 +97,13 @@ graph TD
 ### 2.3 UI & Design System (`src/ui/`)
 - **`FramelessWindow`** (`src/ui/frameless_window.py`): Custom frameless container widget extending `QWidget`.
   - **Desktop Edge Snapping**: Evaluates `_apply_edge_snapping(raw_pos)` during `mouseMoveEvent` dragging. Snaps within a 15 px threshold against `QScreen.availableGeometry()` (respecting taskbars across multi-monitor setups and DPI scaling).
-- **`MainWindow`** (`src/ui/main_window.py`): Primary top-center DeskNotch dock extending `FramelessWindow`.
-  - **Dynamic Island State Machine**: Manages authoritative presentation states (`HIDDEN`, `COLLAPSED` [220x34 px], `EXPANDED` [380x174 px]).
-  - **Top-Center Screen Anchoring & Geometry Lifecycle**: `update_top_center_position()` computes pixel-perfect top-center `QRect` on the selected monitor work area (`availableGeometry()`) with `TOP_OFFSET_PX = 0` flush against the screen bezel and `HWND_TOPMOST` Z-order promotion. Guarantees constant center X alignment during launch, 180ms `OutCubic` pop-in/pop-out geometry animations, and repeated expand/collapse cycles.
+- **`MainWindow`** (`src/ui/main_window.py`): Primary hybrid top-center dock extending `FramelessWindow`.
+  - **Dynamic Island State Machine**: Manages authoritative presentation states (`HIDDEN`, `COLLAPSED` [220x34 px flush notch at `y = 0`, `14px` bottom radius, `8px` ears], `EXPANDED` [410x178 px / 410x216 px w/ lyrics floating oval at `y = 12`, `32px` corners]).
+  - **Top-Center Screen Anchoring & Geometry Lifecycle**: `update_top_center_position()` computes pixel-perfect top-center `QRect` on the selected monitor work area (`availableGeometry()`) with `COLLAPSED_TOP_OFFSET_PX = 0` flush against the top screen bezel for the collapsed notch and `EXPANDED_TOP_OFFSET_PX = 12` for the floating oval card, paired with `HWND_TOPMOST` Z-order promotion. Guarantees constant center X alignment during launch, 180ms `OutCubic` pop-in/pop-out geometry animations, and repeated expand/collapse cycles.
   - **Notch Metadata Alignment & Expand Direction**: Locks `_capsule_widget.setFixedSize(220, 34)` upon collapse animation completion in `_on_geom_anim_finished()`, preserving vertical center alignment (`center().y() == 17.0`). Morphing during `COLLAPSED → EXPANDED` scales layout bounds symmetrically around the screen center X coordinate.
   - **Hover/Click Trigger, Pinning & Collapse Timer**: Configurable `expand_trigger` (`hover` with intent delay or `click`), `btn_pin` lock toggle to hold the card open, and `QTimer` (`collapse_delay_ms`) for automatic collapse.
 - **`ElidedLabel` & `InteractiveScrubSlider`** (`src/ui/components.py`): Dynamic elided labels and click-to-seek progress slider with hover timestamp tooltips.
-- **Theme System** (`src/ui/theme.py`): Fixed Pure Black / Obsidian palette (`#000000`, `#0B0B0D`, `#00FF7F`, `#C1121C`) paired with dynamic album-art color extraction (`extract_dominant_color`) for radial ambient card glow and visualizer tinting.
+- **Theme & Hex Appearance System** (`src/ui/theme.py`, `src/core/settings.py`): Default Pure Black / Obsidian palette (`#000000` background and border) customizable by users via 6-digit `#RRGGBB` hex color codes (`appearance/bg_color`, `appearance/border_color`), paired with dynamic album-art color extraction (`extract_dominant_color`) for radial ambient card glow and visualizer tinting.
 
 ### 2.4 System Tray Component (`src/ui/system_tray.py`)
 - **`SystemTrayIcon`**: Subclass of `QSystemTrayIcon` featuring:
@@ -113,8 +113,8 @@ graph TD
 
 ### 2.5 Preferences & Storage Layer (`src/core/settings.py` & `src/ui/settings_dialog.py`)
 - **`SettingsManager`**: Qt-native wrapper around `QSettings("KrishnaOS", "MediaDock")`.
-  - Managed preferences: `close_to_tray`, `start_hidden`, `always_on_top`, `remember_position`, `compact_mode`, `hotkeys/show_hide` (default `"Ctrl+Alt+S"`), `hotkeys/play_pause` (default `"Ctrl+Alt+Space"`), `autostart`. Single source of truth with explicit `sync()` on save and tray exit.
-- **`SettingsDialog`**: Landscape preferences configuration dialog (`680x440` px) with `showEvent` control refresh, interactive shortcut recorders, `CollapseDelaySpinBox` (500-30000 ms), and fixed visual identity panel.
+  - Managed preferences: `general/close_to_tray`, `general/start_hidden`, `general/autostart_windows`, `window/always_on_top`, `window/fullscreen_auto_hide`, `window/display_monitor`, `dynamic_island/enabled`, `dynamic_island/expand_trigger`, `dynamic_island/hover_intent_delay_ms`, `dynamic_island/collapse_delay_ms`, `features/lyrics_enabled`, `appearance/bg_color`, `appearance/border_color`, `audio/*`, `hotkeys/show_hide` (default `"Ctrl+Alt+S"`), and `hotkeys/play_pause` (default `"Ctrl+Alt+Space"`). Single source of truth with explicit `sync()` on save and tray exit.
+- **`SettingsDialog`**: Resizable frosted Gaussian-blur glass dialog (`820x600` px, `780x560` minimum; Windows 11 `DWMWA_SYSTEMBACKDROP_TYPE` Acrylic with Windows 10 `SetWindowCompositionAttribute` fallback) featuring a `185px` sidebar, 6 scrollable card-grouped tabs, `showEvent` backdrop & control refresh, interactive shortcut recorders, `CollapseDelaySpinBox` (500–30000 ms), `#RRGGBB` hex appearance pickers with live preview, and GitHub links in About.
 
 ### 2.6 Operating System Integration (`src/utils/autostart.py` & `src/ui/hotkeys.py`)
 - **`AutostartManager`**: Windows Registry autostart under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.

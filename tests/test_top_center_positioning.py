@@ -1,16 +1,25 @@
 """Unit tests for Dynamic Island top-center window positioning and non-draggable behavior."""
 
+import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-from PySide6.QtCore import Qt, QPoint, QRect
+from PySide6.QtCore import Qt, QPoint, QRect, QSettings
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication
 
 from src.core.settings import SettingsManager
 from src.ui.frameless_window import FramelessWindow
-from src.ui.main_window import MainWindow, TOP_OFFSET_PX, COLLAPSED_SIZE, EXPANDED_SIZE
+from src.ui.main_window import (
+    MainWindow,
+    TOP_OFFSET_PX,
+    COLLAPSED_TOP_OFFSET_PX,
+    EXPANDED_TOP_OFFSET_PX,
+    COLLAPSED_SIZE,
+    EXPANDED_SIZE,
+)
 
 
 class TestTopCenterPositioning(unittest.TestCase):
@@ -24,10 +33,20 @@ class TestTopCenterPositioning(unittest.TestCase):
             cls.app = QApplication(sys.argv)
 
     def setUp(self) -> None:
-        """Initialize clean SettingsManager and MainWindow for each test."""
-        self.settings = SettingsManager()
-        self.settings.clear()
+        """Initialize clean isolated SettingsManager and MainWindow for each test."""
+        self.tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".ini")
+        self.tmp_file.close()
+        self.qs = QSettings(self.tmp_file.name, QSettings.Format.IniFormat)
+        self.settings = SettingsManager(qsettings=self.qs)
         self.window = MainWindow(settings_manager=self.settings)
+
+    def tearDown(self) -> None:
+        """Clean up temporary INI file after each test."""
+        if hasattr(self, "tmp_file") and os.path.exists(self.tmp_file.name):
+            try:
+                os.unlink(self.tmp_file.name)
+            except OSError:
+                pass
 
     def test_allow_drag_property_defaults_and_override(self) -> None:
         """Verify FramelessWindow default allow_drag is True, but MainWindow sets allow_drag=False."""
@@ -69,27 +88,27 @@ class TestTopCenterPositioning(unittest.TestCase):
 
     @patch("PySide6.QtGui.QGuiApplication.primaryScreen")
     def test_compute_top_center_collapsed_geometry(self, mock_primary_screen) -> None:
-        """Verify compute_top_center_collapsed_geometry centers DeskNotch collapsed bar at top work area + TOP_OFFSET_PX."""
+        """Verify compute_top_center_collapsed_geometry centers collapsed notch at top work area + COLLAPSED_TOP_OFFSET_PX."""
         mock_screen = MagicMock()
         mock_screen.availableGeometry.return_value = QRect(0, 0, 1920, 1080)
         mock_primary_screen.return_value = mock_screen
 
         rect = self.window.compute_top_center_collapsed_geometry()
         expected_x = (1920 - COLLAPSED_SIZE[0]) // 2
-        expected_y = TOP_OFFSET_PX
+        expected_y = COLLAPSED_TOP_OFFSET_PX
 
         self.assertEqual(rect, QRect(expected_x, expected_y, COLLAPSED_SIZE[0], COLLAPSED_SIZE[1]))
 
     @patch("PySide6.QtGui.QGuiApplication.primaryScreen")
     def test_compute_top_center_expanded_geometry(self, mock_primary_screen) -> None:
-        """Verify compute_top_center_expanded_geometry centers DeskNotch expanded card at top work area + TOP_OFFSET_PX."""
+        """Verify compute_top_center_expanded_geometry centers expanded oval card at top work area + EXPANDED_TOP_OFFSET_PX."""
         mock_screen = MagicMock()
         mock_screen.availableGeometry.return_value = QRect(0, 0, 1920, 1080)
         mock_primary_screen.return_value = mock_screen
 
         rect = self.window.compute_top_center_expanded_geometry()
         expected_x = (1920 - EXPANDED_SIZE[0]) // 2
-        expected_y = TOP_OFFSET_PX
+        expected_y = EXPANDED_TOP_OFFSET_PX
 
         self.assertEqual(rect, QRect(expected_x, expected_y, EXPANDED_SIZE[0], EXPANDED_SIZE[1]))
 
@@ -171,7 +190,7 @@ class TestTopCenterPositioning(unittest.TestCase):
             exp_geom = self.window.geometry()
             self.assertEqual(exp_geom.width(), EXPANDED_SIZE[0])
             self.assertEqual(exp_geom.height(), EXPANDED_SIZE[1])
-            self.assertEqual(exp_geom.y(), TOP_OFFSET_PX)
+            self.assertEqual(exp_geom.y(), EXPANDED_TOP_OFFSET_PX)
             self.assertEqual(exp_geom.x() + exp_geom.width() / 2.0, expected_screen_cx)
 
             # 2. Collapse transition
@@ -185,7 +204,7 @@ class TestTopCenterPositioning(unittest.TestCase):
             col_geom = self.window.geometry()
             self.assertEqual(col_geom.width(), COLLAPSED_SIZE[0])
             self.assertEqual(col_geom.height(), COLLAPSED_SIZE[1])
-            self.assertEqual(col_geom.y(), TOP_OFFSET_PX)
+            self.assertEqual(col_geom.y(), COLLAPSED_TOP_OFFSET_PX)
             self.assertEqual(col_geom.x() + col_geom.width() / 2.0, expected_screen_cx)
             self.assertEqual(col_geom, initial_collapsed_geom, f"Drift detected at cycle {cycle}")
 
@@ -220,14 +239,15 @@ class TestTopCenterPositioning(unittest.TestCase):
         post_cap_cy = post_cap_geom.y() + post_cap_geom.height() / 2.0
         post_title_cy = capsule.title_label.geometry().y() + capsule.title_label.geometry().height() / 2.0
         post_icon_cy = capsule.icon_label.geometry().y() + capsule.icon_label.geometry().height() / 2.0
-        post_dot_cy = capsule.status_dot.geometry().y() + capsule.status_dot.geometry().height() / 2.0
+        post_pulse_cy = capsule.pulse_bars.geometry().y() + capsule.pulse_bars.geometry().height() / 2.0
 
+        self.assertFalse(hasattr(capsule, "status_dot"))
         self.assertEqual(post_cap_geom.width(), COLLAPSED_SIZE[0])
         self.assertEqual(post_cap_geom.height(), COLLAPSED_SIZE[1])
         self.assertEqual(post_cap_cy, COLLAPSED_SIZE[1] / 2.0)
         self.assertEqual(post_title_cy, post_cap_cy)
         self.assertEqual(post_icon_cy, post_cap_cy)
-        self.assertEqual(post_dot_cy, post_cap_cy)
+        self.assertAlmostEqual(post_pulse_cy, post_cap_cy, delta=0.5)
 
     def test_collapsed_to_expanded_animation_center_x_constant(self) -> None:
         """Verify window center X remains strictly constant and equal to screen center X throughout COLLAPSED -> EXPANDED."""

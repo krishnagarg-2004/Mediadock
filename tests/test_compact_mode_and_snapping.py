@@ -1,10 +1,12 @@
 """Unit tests for Compact Mode View and Desktop Edge Snapping in MediaDock."""
 
+import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 
-from PySide6.QtCore import Qt, QPoint, QRect
+from PySide6.QtCore import Qt, QPoint, QRect, QSettings
 from PySide6.QtWidgets import QApplication
 
 from src.core.models import TrackInfo, PlaybackStatus
@@ -76,12 +78,22 @@ class TestCompactModeAndEdgeSnapping(unittest.TestCase):
     """Comprehensive test suite covering Compact Mode and Desktop Edge Snapping."""
 
     def setUp(self) -> None:
-        """Create clean SettingsManager and MainWindow for each test."""
-        self.settings = SettingsManager()
-        self.settings.clear()
+        """Create clean isolated SettingsManager and MainWindow for each test."""
+        self.tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".ini")
+        self.tmp_file.close()
+        self.qs = QSettings(self.tmp_file.name, QSettings.Format.IniFormat)
+        self.settings = SettingsManager(qsettings=self.qs)
         self.provider = DummyMediaProvider(available=False)
         self.media_core = MediaCore(provider=self.provider)
         self.window = MainWindow(media_core=self.media_core, settings_manager=self.settings)
+
+    def tearDown(self) -> None:
+        """Clean up temporary INI file after each test."""
+        if hasattr(self, "tmp_file") and os.path.exists(self.tmp_file.name):
+            try:
+                os.unlink(self.tmp_file.name)
+            except OSError:
+                pass
 
     # --- 1. Compact Mode Persistence & Default ---
 

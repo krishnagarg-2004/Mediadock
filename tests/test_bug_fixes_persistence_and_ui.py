@@ -71,7 +71,8 @@ class TestBugFixesPersistenceAndUI(unittest.TestCase):
         self.assertEqual(sm2.get_hotkey_show_hide(), "Ctrl+Alt+K")
         self.assertEqual(sm2.get_hotkey_play_pause(), "Ctrl+Alt+P")
 
-    def test_settings_dialog_save_persists_to_fresh_instance(self) -> None:
+    @patch("src.utils.autostart.winreg")
+    def test_settings_dialog_save_persists_to_fresh_instance(self, mock_winreg: MagicMock) -> None:
         """Verify SettingsDialog save_settings() correctly syncs all 8 user preferences to fresh instances."""
         dlg = SettingsDialog(settings_manager=self.sm)
         dlg.chk_close_to_tray.setChecked(False)
@@ -163,20 +164,19 @@ class TestBugFixesPersistenceAndUI(unittest.TestCase):
         capsule.show()
         self.app.processEvents()
 
-        # Icon (18x18), Dot (8x8)
+        # Icon (18x18), no activity dot in collapsed notch
         self.assertEqual(capsule.icon_label.width(), 18)
         self.assertEqual(capsule.icon_label.height(), 18)
-        self.assertEqual(capsule.status_dot.width(), 8)
-        self.assertEqual(capsule.status_dot.height(), 8)
+        self.assertFalse(hasattr(capsule, "status_dot"))
 
         # Title alignment = Center
         self.assertEqual(capsule.title_label.alignment() & Qt.AlignmentFlag.AlignCenter, Qt.AlignmentFlag.AlignCenter)
 
         # Vertical Center check (half of 34px DeskNotch bar = 17.0)
         icon_y_center = capsule.icon_label.y() + capsule.icon_label.height() / 2.0
-        dot_y_center = capsule.status_dot.y() + capsule.status_dot.height() / 2.0
+        pulse_y_center = capsule.pulse_bars.y() + capsule.pulse_bars.height() / 2.0
         self.assertAlmostEqual(icon_y_center, 17.0, delta=2.0)
-        self.assertAlmostEqual(dot_y_center, 17.0, delta=2.0)
+        self.assertAlmostEqual(pulse_y_center, 17.0, delta=2.0)
 
 
 if __name__ == "__main__":

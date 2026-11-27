@@ -61,6 +61,7 @@ from src.ui.components_island import (
 )
 from src.ui.theme import (
     COLOR_BG_ISLAND,
+    COLOR_BORDER_ISLAND,
     COLOR_ACCENT_BLUE,
     create_rounded_pixmap,
     extract_dominant_color,
@@ -119,13 +120,16 @@ def _format_time_ms(ms: int) -> str:
     return f"{minutes:02d}:{seconds:02d}"
 
 
-TOP_OFFSET_PX: int = 0
+COLLAPSED_TOP_OFFSET_PX: int = 0
+EXPANDED_TOP_OFFSET_PX: int = 12
+TOP_OFFSET_PX: int = COLLAPSED_TOP_OFFSET_PX
 COLLAPSED_SIZE = (220, 34)
-EXPANDED_SIZE = (380, 174)
+EXPANDED_SIZE = (410, 178)
+LYRICS_BAR_EXTRA_HEIGHT: int = 38
 
 
 class MainWindow(FramelessWindow):
-    """Main application widget window for MediaDock styled with DeskNotch aesthetics."""
+    """Main application widget window for MediaDock with flush top-notch collapsed bar and oval expanded card."""
 
     open_settings_requested = Signal()
 
@@ -142,10 +146,13 @@ class MainWindow(FramelessWindow):
 
         self._media_core = media_core
         self._settings_manager = settings_manager or SettingsManager()
+        self._custom_bg_override: bool = bg_color != COLOR_BG_ISLAND
+        self._border_color: QColor = QColor(self._settings_manager.get_notch_border_color())
         self._default_art_pixmap = self._create_default_art_pixmap()
         self._is_pinned: bool = False
         self._manually_hidden: bool = False
         self._current_source_display: str = "MediaDock"
+        self._last_lyric_track_sig: tuple[str, str] = ("", "")
 
         # Dynamic Island State Machine & Collapse Timer Initialization
         self._state: DynamicIslandState = DynamicIslandState.HIDDEN
@@ -199,6 +206,7 @@ class MainWindow(FramelessWindow):
         self._init_ui()
 
         # Apply settings configuration & enforce initial state
+        self._apply_appearance_colors()
         self._apply_always_on_top(self._settings_manager.get_always_on_top())
         self._settings_manager.settings_changed.connect(self._on_setting_changed)
 
@@ -243,12 +251,13 @@ class MainWindow(FramelessWindow):
             self._capsule_widget.setFixedSize(COLLAPSED_SIZE[0], COLLAPSED_SIZE[1])
             self.setFixedSize(COLLAPSED_SIZE[0], COLLAPSED_SIZE[1])
         elif self._state == DynamicIslandState.EXPANDED:
-            self._border_radius = 26.0
-            self._ear_radius = 10.0
+            self._border_radius = 32.0
+            self._ear_radius = 0.0
+            exp_w, exp_h = self._get_expanded_size()
             target_rect = self.compute_top_center_expanded_geometry()
             self.setGeometry(target_rect)
-            self._expanded_widget.setFixedSize(EXPANDED_SIZE[0], EXPANDED_SIZE[1])
-            self.setFixedSize(EXPANDED_SIZE[0], EXPANDED_SIZE[1])
+            self._expanded_widget.setFixedSize(exp_w, exp_h)
+            self.setFixedSize(exp_w, exp_h)
         self._enforce_topmost_zorder()
         self.update()
 
@@ -308,8 +317,8 @@ class MainWindow(FramelessWindow):
                 self._enforce_topmost_zorder()
 
         elif state == DynamicIslandState.EXPANDED:
-            self._border_radius = 26.0
-            self._ear_radius = 10.0
+            self._border_radius = 32.0
+            self._ear_radius = 0.0
             if self._collapse_timer.isActive():
                 self._collapse_timer.stop()
 
@@ -337,10 +346,11 @@ class MainWindow(FramelessWindow):
             else:
                 if self._geom_anim.state() == QAbstractAnimation.State.Running:
                     self._geom_anim.stop()
+                exp_w, exp_h = self._get_expanded_size()
                 self._capsule_widget.hide()
                 self._expanded_widget.show()
-                self._expanded_widget.setFixedSize(EXPANDED_SIZE[0], EXPANDED_SIZE[1])
-                self.setFixedSize(EXPANDED_SIZE[0], EXPANDED_SIZE[1])
+                self._expanded_widget.setFixedSize(exp_w, exp_h)
+                self.setFixedSize(exp_w, exp_h)
                 self.setGeometry(target_rect)
                 self.show()
                 self._enforce_topmost_zorder()
@@ -460,16 +470,22 @@ class MainWindow(FramelessWindow):
                 self._enforce_topmost_zorder()
 
     def paintEvent(self, event) -> None:
-        """Paint DeskNotch flared-ear obsidian glass shell and radial album-art cover glow."""
+        """Paint flush top-bezel notch when collapsed and smooth rounded-oval obsidian shell when expanded."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        rect = QRectF(self.rect()).adjusted(0.5, 0.0, -0.5, -0.5)
-        path = build_desknotch_path(
-            rect,
-            bottom_radius=self._border_radius,
-            ear_radius=self._ear_radius,
-        )
+        if self._ear_radius > 0.0:
+            rect = QRectF(self.rect()).adjusted(0.5, 0.0, -0.5, -0.5)
+            path = build_desknotch_path(
+                rect,
+                bottom_radius=self._border_radius,
+                ear_radius=self._ear_radius,
+            )
+        else:
+            rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+            radius = min(float(self._border_radius), rect.width() / 2.0, rect.height() / 2.0)
+            path = QPainterPath()
+            path.addRoundedRect(rect, radius, radius)
 
         # Base obsidian shell
         painter.fillPath(path, self._bg_color)
@@ -481,7 +497,7 @@ class MainWindow(FramelessWindow):
         sheen.setColorAt(1.0, QColor(255, 255, 255, 2))
         painter.fillPath(path, sheen)
 
-        # DeskNotch signature radial cover glow anchored behind left artwork (when expanded)
+        # Radial cover glow anchored behind left artwork (when expanded)
         if self._state == DynamicIslandState.EXPANDED and hasattr(self, "_current_accent"):
             painter.save()
             painter.setClipPath(path)
@@ -498,14 +514,41 @@ class MainWindow(FramelessWindow):
             painter.fillRect(self.rect(), glow_grad)
             painter.restore()
 
-        # Subtle hairline border stroke for edge highlight
-        pen = QPen(QColor(255, 255, 255, 22), 1.0)
+        if self._border_color == COLOR_BORDER_ISLAND:
+            # Subtle inner hairline border stroke when default black outer border is used
+            if self._ear_radius > 0.0:
+                inner_path = build_desknotch_path(
+                    rect.adjusted(1.0, 0.0, -1.0, -1.0),
+                    bottom_radius=max(1.0, float(self._border_radius) - 1.0),
+                    ear_radius=self._ear_radius,
+                )
+            else:
+                inner_rect = rect.adjusted(1.0, 1.0, -1.0, -1.0)
+                inner_radius = min(
+                    max(1.0, float(self._border_radius) - 1.0),
+                    inner_rect.width() / 2.0,
+                    inner_rect.height() / 2.0,
+                )
+                inner_path = QPainterPath()
+                inner_path.addRoundedRect(inner_rect, inner_radius, inner_radius)
+            painter.setPen(QPen(QColor(255, 255, 255, 22), 1.0))
+            painter.drawPath(inner_path)
+            pen_width = 1.0
+        else:
+            pen_width = 1.5
+
+        pen = QPen(self._border_color, pen_width)
         painter.setPen(pen)
         painter.drawPath(path)
         painter.end()
 
-    def compute_top_center_geometry(self, width: int, height: int) -> QRect:
-        """Calculate top-center QRect on selected screen work area with TOP_OFFSET_PX margin."""
+    def compute_top_center_geometry(
+        self,
+        width: int,
+        height: int,
+        y_offset: Optional[int] = None,
+    ) -> QRect:
+        """Calculate top-center QRect on selected screen work area using per-state Y offset."""
         target_monitor = self._settings_manager.get_display_monitor()
         screens = QGuiApplication.screens()
         screen = None
@@ -529,26 +572,68 @@ class MainWindow(FramelessWindow):
             return QRect(0, 0, width, height)
         geom = screen.availableGeometry()
         x = geom.left() + (geom.width() - width) // 2
-        y = geom.top() + TOP_OFFSET_PX
+        offset = y_offset if y_offset is not None else (
+            EXPANDED_TOP_OFFSET_PX if self._state == DynamicIslandState.EXPANDED else COLLAPSED_TOP_OFFSET_PX
+        )
+        y = geom.top() + offset
         return QRect(x, y, width, height)
 
     def compute_top_center_collapsed_geometry(self) -> QRect:
-        """Calculate target top-center QRect for COLLAPSED state (180x40 px)."""
-        return self.compute_top_center_geometry(COLLAPSED_SIZE[0], COLLAPSED_SIZE[1])
+        """Calculate target top-center QRect for COLLAPSED notch anchored flush at screen top (y = 0)."""
+        return self.compute_top_center_geometry(
+            COLLAPSED_SIZE[0],
+            COLLAPSED_SIZE[1],
+            y_offset=COLLAPSED_TOP_OFFSET_PX,
+        )
+
+    def _get_expanded_size(self) -> tuple[int, int]:
+        """Return target expanded (width, height), adding room for the lyrics strip only when visible."""
+        extra_h = LYRICS_BAR_EXTRA_HEIGHT if (hasattr(self, "lyrics_label") and not self.lyrics_label.isHidden()) else 0
+        return (EXPANDED_SIZE[0], EXPANDED_SIZE[1] + extra_h)
+
+    def _sync_expanded_geometry(self) -> None:
+        """Adjust expanded window height cleanly when the lyrics strip shows or hides."""
+        if self._state != DynamicIslandState.EXPANDED:
+            return
+        if self._geom_anim.state() == QAbstractAnimation.State.Running:
+            return
+        exp_w, exp_h = self._get_expanded_size()
+        if self.width() == exp_w and self.height() == exp_h:
+            return
+        self._expanded_widget.setFixedSize(exp_w, exp_h)
+        self.setFixedSize(exp_w, exp_h)
+        self.update_top_center_position(exp_w, exp_h)
+
+    def _apply_lyrics_style(self, accent_color: QColor) -> None:
+        """Style dedicated full-width synchronized lyrics banner outside MediaTile."""
+        if hasattr(self, "lyrics_label"):
+            self.lyrics_label.setStyleSheet(
+                f"color: {accent_color.name()};"
+                " background-color: rgba(255, 255, 255, 0.04);"
+                " border: 1px solid rgba(255, 255, 255, 0.07);"
+                " border-radius: 8px;"
+                " padding: 2px 10px;"
+            )
 
     def compute_top_center_expanded_geometry(self) -> QRect:
-        """Calculate target top-center QRect for EXPANDED state (360x160 px)."""
-        return self.compute_top_center_geometry(EXPANDED_SIZE[0], EXPANDED_SIZE[1])
+        """Calculate target top-center QRect for EXPANDED floating oval card (y = EXPANDED_TOP_OFFSET_PX)."""
+        exp_w, exp_h = self._get_expanded_size()
+        return self.compute_top_center_geometry(
+            exp_w,
+            exp_h,
+            y_offset=EXPANDED_TOP_OFFSET_PX,
+        )
 
     def update_top_center_position(self, width: Optional[int] = None, height: Optional[int] = None) -> None:
         """Reposition and resize window to top-center of primary screen work area."""
         if width is not None and height is not None:
             w, h = width, height
         elif self._state == DynamicIslandState.EXPANDED:
-            w, h = EXPANDED_SIZE
+            w, h = self._get_expanded_size()
         else:
             w, h = COLLAPSED_SIZE
-        target_rect = self.compute_top_center_geometry(w, h)
+        y_off = EXPANDED_TOP_OFFSET_PX if self._state == DynamicIslandState.EXPANDED else COLLAPSED_TOP_OFFSET_PX
+        target_rect = self.compute_top_center_geometry(w, h, y_offset=y_off)
         self.setGeometry(target_rect)
 
     def showEvent(self, event) -> None:
@@ -605,6 +690,18 @@ class MainWindow(FramelessWindow):
         if self.isVisible():
             self.show()
 
+    def _apply_appearance_colors(self) -> None:
+        """Apply configured hex background and border colors to shell and collapsed notch widget."""
+        bg_hex = self._settings_manager.get_notch_bg_color() if hasattr(self._settings_manager, "get_notch_bg_color") else "#000000"
+        border_hex = self._settings_manager.get_notch_border_color() if hasattr(self._settings_manager, "get_notch_border_color") else "#000000"
+        if not self._custom_bg_override and isinstance(bg_hex, str) and QColor(bg_hex).isValid():
+            self._bg_color = QColor(bg_hex)
+        if isinstance(border_hex, str) and QColor(border_hex).isValid():
+            self._border_color = QColor(border_hex)
+        if hasattr(self, "_capsule_widget"):
+            self._capsule_widget.set_appearance_colors(self._bg_color, self._border_color)
+        self.update()
+
     def force_close(self) -> None:
         """Flag window as quitting so closeEvent accepts closing instead of hiding to tray."""
         self._is_quitting = True
@@ -642,6 +739,10 @@ class MainWindow(FramelessWindow):
         elif key == "features/lyrics_enabled":
             if not bool(value) and hasattr(self, "lyrics_label"):
                 self.lyrics_label.hide()
+                self._sync_expanded_geometry()
+        elif key in ("appearance/bg_color", "appearance/border_color"):
+            self._custom_bg_override = False
+            self._apply_appearance_colors()
 
     def _init_ui(self) -> None:
         """Initialize the widget layout, collapsed capsule container, and expanded card container."""
@@ -655,20 +756,21 @@ class MainWindow(FramelessWindow):
         self._notch_widget = self._capsule_widget
         root_layout.addWidget(self._capsule_widget)
 
-        # 2. Expanded Card Container Widget (DeskNotch Layout)
+        # 2. Expanded Card Container Widget (Oval Capsule Layout)
         self._expanded_widget = QWidget(self)
         expanded_layout = QVBoxLayout(self._expanded_widget)
-        expanded_layout.setContentsMargins(20, 12, 20, 12)
+        expanded_layout.setContentsMargins(18, 12, 18, 12)
         expanded_layout.setSpacing(6)
 
-        # Frosted Inner Glass Media Tile (DeskNotch Tile surface)
+        # Frosted Inner Glass Media Tile (fixed height so controls never overflow downward)
         self._media_tile_frame = QFrame(self._expanded_widget)
         self._media_tile_frame.setObjectName("MediaTile")
+        self._media_tile_frame.setFixedHeight(120)
         self._media_tile_frame.setStyleSheet(
             "QFrame#MediaTile {"
             "  background-color: rgba(255, 255, 255, 0.04);"
             "  border: 1px solid rgba(255, 255, 255, 0.08);"
-            "  border-radius: 16px;"
+            "  border-radius: 20px;"
             "}"
         )
         tile_layout = QHBoxLayout(self._media_tile_frame)
@@ -739,17 +841,21 @@ class MainWindow(FramelessWindow):
         self.artist_label.setFont(sub_font)
         self.artist_label.setStyleSheet("color: rgba(255, 255, 255, 0.55); background: transparent;")
 
-        # Synchronized Lyrics Line
-        self.lyrics_label = ElidedLabel("", self._media_tile_frame)
-        lyrics_font = QFont("Segoe UI", 8)
+        # Dedicated Full-Width Synchronized Lyrics Strip (outside MediaTile for full visibility without crowding buttons)
+        self.lyrics_label = QLabel("", self._expanded_widget)
+        lyrics_font = QFont("Segoe UI")
+        lyrics_font.setPointSizeF(8.5)
         lyrics_font.setItalic(True)
         self.lyrics_label.setFont(lyrics_font)
-        self.lyrics_label.setStyleSheet("color: #00FF7F; background: transparent;")
+        self.lyrics_label.setWordWrap(True)
+        self.lyrics_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lyrics_label.setFixedHeight(32)
+        self._apply_lyrics_style(self._current_accent)
         self.lyrics_label.hide()
 
         # DeskNotch Transport Controls Row
         controls_layout = QHBoxLayout()
-        controls_layout.setContentsMargins(0, 4, 0, 0)
+        controls_layout.setContentsMargins(0, 2, 0, 0)
         controls_layout.setSpacing(4)
         controls_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
@@ -813,15 +919,15 @@ class MainWindow(FramelessWindow):
         info_layout.addLayout(source_row)
         info_layout.addWidget(self.title_label)
         info_layout.addWidget(self.artist_label)
-        info_layout.addWidget(self.lyrics_label)
+        info_layout.addStretch(1)
         info_layout.addLayout(controls_layout)
 
         tile_layout.addWidget(self.art_label)
         tile_layout.addLayout(info_layout)
 
-        # Bottom Section: Interactive Timeline Scrub Bar + DeskNotch Mini Dock (Pin & Settings)
+        # Bottom Section: Interactive Timeline Scrub Bar + Action Dock (Pin & Settings)
         progress_layout = QHBoxLayout()
-        progress_layout.setContentsMargins(4, 0, 4, 0)
+        progress_layout.setContentsMargins(6, 0, 6, 0)
         progress_layout.setSpacing(6)
 
         time_font = QFont("Segoe UI", 8)
@@ -866,7 +972,8 @@ class MainWindow(FramelessWindow):
         progress_layout.addWidget(self.btn_pin)
         progress_layout.addWidget(self.btn_settings)
 
-        expanded_layout.addWidget(self._media_tile_frame, stretch=1)
+        expanded_layout.addWidget(self._media_tile_frame)
+        expanded_layout.addWidget(self.lyrics_label)
         expanded_layout.addLayout(progress_layout)
 
         root_layout.addWidget(self._expanded_widget)
@@ -1025,7 +1132,8 @@ class MainWindow(FramelessWindow):
         if not self._is_seeking:
             self.progress_slider.setValue(current_pos_ms)
 
-        # Update synchronized lyrics preview line
+        # Update synchronized lyrics preview line in dedicated full-width strip
+        was_hidden = self.lyrics_label.isHidden()
         if self._settings_manager.get_lyrics_enabled():
             lyric = self._lyrics_provider.get_current_lyric(current_pos_ms)
             if lyric:
@@ -1035,6 +1143,8 @@ class MainWindow(FramelessWindow):
                 self.lyrics_label.hide()
         else:
             self.lyrics_label.hide()
+        if was_hidden != self.lyrics_label.isHidden():
+            self._sync_expanded_geometry()
 
     # --- Qt Signal Slots ---
 
@@ -1075,6 +1185,13 @@ class MainWindow(FramelessWindow):
         self.artist_label.setText(track.artist)
         self._update_album_art(track.album_art_bytes)
 
+        track_sig = (str(track.title or ""), str(track.artist or ""))
+        if track_sig != self._last_lyric_track_sig:
+            self._last_lyric_track_sig = track_sig
+            self.lyrics_label.clear()
+            self.lyrics_label.hide()
+            self._sync_expanded_geometry()
+
         # Trigger synchronized lyrics fetch
         if self._settings_manager.get_lyrics_enabled() and track and track.title:
             self._lyrics_provider.fetch_lyrics_async(track.title, track.artist, track.duration_ms)
@@ -1085,7 +1202,7 @@ class MainWindow(FramelessWindow):
         self.slider_volume.setStyleSheet(get_slider_stylesheet(self._current_accent))
         self._capsule_widget.set_accent_color(self._current_accent)
         self._visualizer.set_bar_color(self._current_accent)
-        self.lyrics_label.setStyleSheet(f"color: {self._current_accent.name()}; background: transparent;")
+        self._apply_lyrics_style(self._current_accent)
         self.update()
 
         # Timeline state update

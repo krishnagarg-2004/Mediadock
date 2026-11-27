@@ -4,10 +4,12 @@ import sys
 import unittest
 from unittest.mock import patch, MagicMock
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QApplication, QLabel
 
 from src.core.settings import SettingsManager
-from src.ui.settings_dialog import SettingsDialog
+from src.ui.main_window import MainWindow
+from src.ui.settings_dialog import SettingsDialog, GITHUB_REPO_URL
 
 
 class TestSettingsDialog(unittest.TestCase):
@@ -154,10 +156,12 @@ class TestSettingsDialog(unittest.TestCase):
         self.assertTrue(dlg.chk_start_hidden.isChecked())
 
     def test_landscape_sidebar_and_stacked_widget_pages(self) -> None:
-        """Verify SettingsDialog initializes landscape layout with 6 sidebar items and 6 stacked pages."""
+        """Verify SettingsDialog initializes spacious landscape layout with 6 sidebar items and 6 stacked pages."""
         dlg = SettingsDialog(settings_manager=self.settings)
-        self.assertEqual(dlg.width(), 680)
-        self.assertEqual(dlg.height(), 440)
+        self.assertGreaterEqual(dlg.width(), 780)
+        self.assertGreaterEqual(dlg.height(), 560)
+        self.assertEqual(dlg.minimumWidth(), 780)
+        self.assertEqual(dlg.minimumHeight(), 560)
         self.assertEqual(dlg.sidebar.count(), 6)
         self.assertEqual(dlg.stacked_widget.count(), 6)
 
@@ -199,7 +203,8 @@ class TestSettingsDialog(unittest.TestCase):
         self.assertEqual(dlg.sld_noise_gate.value(), 5)
         self.assertEqual(dlg.cmb_preset.currentText(), "Flat")
 
-    def test_audio_equalizer_ui_save_and_reload(self) -> None:
+    @patch("src.utils.autostart.winreg")
+    def test_audio_equalizer_ui_save_and_reload(self, mock_winreg: MagicMock) -> None:
         """Verify modifying audio boost and tone sliders saves and persists into SettingsManager."""
         dlg = SettingsDialog(settings_manager=self.settings)
         dlg.sld_preamp.setValue(50)  # +5.0 dB
@@ -231,6 +236,73 @@ class TestSettingsDialog(unittest.TestCase):
         self.assertEqual(dlg.sld_bass.value(), 0)
         self.assertEqual(dlg.sld_band_60.value(), 0)
         self.assertEqual(dlg.cmb_preset.currentText(), "Flat")
+
+    def test_appearance_hex_controls_and_no_status_colors(self) -> None:
+        """Verify Appearance page uses hex code inputs for Background/Border only and omits status colors."""
+        dlg = SettingsDialog(settings_manager=self.settings)
+        self.assertEqual(dlg.txt_bg_color_hex.text(), "#000000")
+        self.assertEqual(dlg.txt_border_color_hex.text(), "#000000")
+        self.assertIsNotNone(dlg.btn_reset_appearance)
+
+        appearance_page = dlg.stacked_widget.widget(3)
+        all_texts = " ".join(lbl.text() for lbl in appearance_page.findChildren(QLabel))
+        self.assertNotIn("Active Status", all_texts)
+        self.assertNotIn("Inactive Status", all_texts)
+        self.assertNotIn("non-customizable", all_texts.lower())
+
+    @patch("src.utils.autostart.winreg")
+    def test_appearance_hex_save_and_live_window_update(self, mock_winreg: MagicMock) -> None:
+        """Verify saving custom hex colors persists to SettingsManager and updates MainWindow live."""
+        win = MainWindow(settings_manager=self.settings)
+        dlg = SettingsDialog(settings_manager=self.settings, parent=win)
+
+        dlg.txt_bg_color_hex.setText("121820")
+        dlg.txt_border_color_hex.setText("#00ff7f")
+        dlg.save_settings()
+
+        self.assertEqual(self.settings.get_notch_bg_color(), "#121820")
+        self.assertEqual(self.settings.get_notch_border_color(), "#00FF7F")
+        self.assertEqual(win._bg_color, QColor("#121820"))
+        self.assertEqual(win._border_color, QColor("#00FF7F"))
+        self.assertEqual(win.notch_widget._bg_color, QColor("#121820"))
+        self.assertEqual(win.notch_widget._border_color, QColor("#00FF7F"))
+
+    @patch("src.utils.autostart.winreg")
+    def test_appearance_invalid_hex_blocks_save_and_focuses_page(self, mock_winreg: MagicMock) -> None:
+        """Verify malformed hex input prevents persistence and highlights the Appearance page error."""
+        dlg = SettingsDialog(settings_manager=self.settings)
+        dlg.txt_bg_color_hex.setText("#ZZZZZZ")
+        dlg.save_settings()
+
+        self.assertEqual(dlg.sidebar.currentRow(), 3)
+        self.assertFalse(dlg.lbl_appearance_error.isHidden())
+        self.assertEqual(self.settings.get_notch_bg_color(), "#000000")
+
+    def test_appearance_reset_defaults_restores_black(self) -> None:
+        """Verify Reset to Default restores #000000 in both hex inputs."""
+        dlg = SettingsDialog(settings_manager=self.settings)
+        dlg.txt_bg_color_hex.setText("#1A1A20")
+        dlg.txt_border_color_hex.setText("#00FF7F")
+        dlg.btn_reset_appearance.click()
+
+        self.assertEqual(dlg.txt_bg_color_hex.text(), "#000000")
+        self.assertEqual(dlg.txt_border_color_hex.text(), "#000000")
+
+    def test_about_page_includes_github_link_and_actions(self) -> None:
+        """Verify About page displays clickable project GitHub repository link and action buttons."""
+        dlg = SettingsDialog(settings_manager=self.settings)
+        self.assertIn(GITHUB_REPO_URL, dlg.lbl_github_link.text())
+        self.assertTrue(dlg.lbl_github_link.openExternalLinks())
+        self.assertIsNotNone(dlg.btn_open_github)
+        self.assertIsNotNone(dlg.btn_report_issue)
+
+    def test_settings_dialog_gaussian_blur_backdrop_enabled(self) -> None:
+        """Verify SettingsDialog enables translucent glass background and Windows Gaussian blur mode."""
+        from PySide6.QtCore import Qt
+        dlg = SettingsDialog(settings_manager=self.settings)
+        self.assertTrue(dlg.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground))
+        self.assertIn(dlg._blur_backdrop_mode, ("dwm_acrylic", "composition_acrylic", "translucent"))
+        self.assertIn("transparent", dlg.styleSheet())
 
 
 if __name__ == "__main__":

@@ -102,6 +102,51 @@ class TestMediaDockWindow(unittest.TestCase):
         window.show()
         self.assertTrue(window.isVisible())
 
+    def test_expanded_controls_stay_inside_media_tile_and_lyrics_render_full_width(self) -> None:
+        """Verify transport buttons never clip outside MediaTile and lyrics render in dedicated full-width strip."""
+        from src.ui.main_window import DynamicIslandState, EXPANDED_SIZE, LYRICS_BAR_EXTRA_HEIGHT
+
+        window = MainWindow()
+        window.set_state(DynamicIslandState.EXPANDED, animate=False)
+        self.app.processEvents()
+
+        # Without lyrics, height matches base EXPANDED_SIZE
+        self.assertTrue(window.lyrics_label.isHidden())
+        self.assertEqual(window.size().width(), EXPANDED_SIZE[0])
+        self.assertEqual(window.size().height(), EXPANDED_SIZE[1])
+
+        # Populate a long synced lyric line and trigger visibility
+        window.lyrics_label.setText("♪ Just the same way you showed me, show me everything tonight")
+        window.lyrics_label.show()
+        window._sync_expanded_geometry()
+        self.app.processEvents()
+
+        self.assertEqual(window.height(), EXPANDED_SIZE[1] + LYRICS_BAR_EXTRA_HEIGHT)
+        self.assertTrue(window.lyrics_label.wordWrap())
+        self.assertIsNot(window.lyrics_label.parent(), window._media_tile_frame)
+        self.assertGreaterEqual(window.lyrics_label.width(), 350)
+
+        # Play/Pause disc and Prev/Next buttons stay strictly inside MediaTile bottom edge
+        tile_rect = window._media_tile_frame.rect()
+        self.assertLessEqual(window.btn_play_pause.geometry().bottom(), tile_rect.bottom())
+        self.assertLessEqual(window.btn_prev.geometry().bottom(), tile_rect.bottom())
+        self.assertLessEqual(window.btn_next.geometry().bottom(), tile_rect.bottom())
+
+    def test_capsule_collapsed_and_oval_expanded_geometry(self) -> None:
+        """Verify collapsed uses flush top-bezel notch (y=0, flared ears) while expanded keeps floating oval shape."""
+        from src.ui.main_window import DynamicIslandState, COLLAPSED_TOP_OFFSET_PX, EXPANDED_TOP_OFFSET_PX
+
+        window = MainWindow()
+        self.assertEqual(COLLAPSED_TOP_OFFSET_PX, 0)
+        self.assertEqual(EXPANDED_TOP_OFFSET_PX, 12)
+        window.set_state(DynamicIslandState.COLLAPSED, animate=False)
+        self.assertEqual(window._border_radius, 14.0)
+        self.assertEqual(window._ear_radius, 8.0)
+
+        window.set_state(DynamicIslandState.EXPANDED, animate=False)
+        self.assertEqual(window._border_radius, 32.0)
+        self.assertEqual(window._ear_radius, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

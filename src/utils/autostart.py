@@ -26,11 +26,19 @@ class AutostartManager:
             # Executable created by PyInstaller
             exe_path = os.path.abspath(sys.executable)
             return f'"{exe_path}" --minimized'
-        else:
-            # Development script execution
-            python_exe = os.path.abspath(sys.executable)
-            main_script = os.path.abspath(sys.argv[0])
-            return f'"{python_exe}" "{main_script}" --minimized'
+        # Development script execution: resolve src/main.py reliably regardless of working directory
+        python_exe = os.path.abspath(sys.executable)
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        candidate_main = os.path.join(project_root, "src", "main.py")
+        main_script = candidate_main if os.path.exists(candidate_main) else os.path.abspath(sys.argv[0])
+        return f'"{python_exe}" "{main_script}" --minimized'
+
+    @staticmethod
+    def reconcile(enabled: bool) -> bool:
+        """Synchronize Windows Run registry entry with the persisted autostart preference."""
+        if enabled:
+            return AutostartManager.enable_autostart()
+        return True
 
     @classmethod
     def is_autostart_enabled(cls) -> bool:
