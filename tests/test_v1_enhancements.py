@@ -124,6 +124,28 @@ class TestUpdateCheckWorker(unittest.TestCase):
         self.assertFalse(has_update)
         self.assertEqual(tag, "v1.0.0")
 
+    def test_update_checker_handles_no_releases_404(self):
+        import urllib.error
+        worker = _UpdateCheckWorker("1.0.0")
+        results = []
+        worker.result_ready.connect(lambda has_upd, tag, url, notes: results.append((has_upd, tag, url, notes)))
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_urlopen.side_effect = urllib.error.HTTPError(
+                url="https://api.github.com/repos/krishnagarg-2004/Mediadock/releases/latest",
+                code=404,
+                msg="Not Found",
+                hdrs={},
+                fp=None,
+            )
+            worker.run()
+
+        self.assertEqual(len(results), 1)
+        has_update, tag, url, notes = results[0]
+        self.assertFalse(has_update)
+        self.assertEqual(tag, "v1.0.0")
+        self.assertIn("MediaDock is up to date", notes)
+
 
 if __name__ == "__main__":
     unittest.main()

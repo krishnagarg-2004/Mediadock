@@ -446,6 +446,7 @@ class _UpdateCheckWorker(QThread):
 
     def run(self) -> None:
         import urllib.request
+        import urllib.error
         import json
         import re
 
@@ -485,6 +486,13 @@ class _UpdateCheckWorker(QThread):
                 msg = f"MediaDock is up to date (v{self._current_version})."
 
             self.result_ready.emit(has_update, tag_name, html_url, msg)
+        except urllib.error.HTTPError as he:
+            if he.code == 404:
+                # GitHub returns 404 for /releases/latest when no releases have been published yet on the repository
+                msg = f"MediaDock is up to date (v{self._current_version})."
+                self.result_ready.emit(False, f"v{self._current_version}", GITHUB_REPO_URL + "/releases", msg)
+            else:
+                self.result_ready.emit(False, "", "", f"Could not check for updates: {he}")
         except Exception as e:
             self.result_ready.emit(False, "", "", f"Could not check for updates: {e}")
 
