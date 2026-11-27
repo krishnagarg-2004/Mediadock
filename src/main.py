@@ -43,6 +43,12 @@ def main() -> int:
     app.setOrganizationName("KrishnaOS")
     app.setQuitOnLastWindowClosed(False)
 
+    # Set native application window and taskbar icon
+    icon_path = os.path.join(app_dir, "assets", "icon.ico")
+    if os.path.exists(icon_path):
+        from PySide6.QtGui import QIcon
+        app.setWindowIcon(QIcon(icon_path))
+
     # Single-instance enforcement: exit secondary launches early
     single_instance_guard = SingleInstanceGuard()
     if not single_instance_guard.initialize(sys.argv):

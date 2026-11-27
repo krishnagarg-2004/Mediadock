@@ -46,7 +46,13 @@ class SystemTrayIcon(QSystemTrayIcon):
         media_core: Optional[MediaCore] = None,
         parent: Optional[QObject] = None,
     ) -> None:
-        icon = QIcon(create_tray_icon_pixmap(32))
+        import os
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        icon_path = os.path.join(base_dir, "assets", "icon.ico")
+        if os.path.exists(icon_path):
+            icon = QIcon(icon_path)
+        else:
+            icon = QIcon(create_tray_icon_pixmap(32))
         super().__init__(icon, parent)
 
         self._media_core = media_core

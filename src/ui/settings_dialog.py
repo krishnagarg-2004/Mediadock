@@ -1726,6 +1726,15 @@ class SettingsDialog(QDialog):
 
         card_identity, layout_identity = self._create_setting_card(page_about)
         hdr_about = QHBoxLayout()
+        hdr_about.setSpacing(12)
+
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "assets", "icon.png")
+        if os.path.exists(icon_path):
+            lbl_about_icon = QLabel(card_identity)
+            lbl_about_icon.setFixedSize(36, 36)
+            lbl_about_icon.setPixmap(QPixmap(icon_path).scaled(36, 36, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            hdr_about.addWidget(lbl_about_icon)
+
         lbl_about_title = QLabel("MediaDock", card_identity)
         lbl_about_title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         lbl_about_title.setStyleSheet(f"color: {COLOR_TEXT_PRIMARY.name()};")
