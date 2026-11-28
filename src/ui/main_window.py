@@ -51,6 +51,7 @@ from src.core.media_core import MediaCore
 from src.core.settings import SettingsManager
 from src.core.fullscreen_detector import is_foreground_fullscreen
 from src.media.lyrics_provider import LyricsProvider
+from src.media.artwork_resolver import ArtworkResolver
 from src.ui.frameless_window import FramelessWindow, build_desknotch_path
 from src.ui.components import ElidedLabel, InteractiveScrubSlider, VolumeWedgeWidget
 from src.ui.components_island import (
@@ -203,6 +204,10 @@ class MainWindow(FramelessWindow):
         self._lyrics_provider = LyricsProvider(
             on_lyrics_loaded=lambda key, has_synced: self.lyrics_loaded_signal.emit(key, has_synced)
         )
+
+        # Online Album Artwork Fallback Resolver
+        self._artwork_resolver = ArtworkResolver(self)
+        self._artwork_resolver.artwork_resolved.connect(self._on_online_artwork_resolved)
 
         # Setup subtle opacity fade animation effect for track changes
         self._opacity_effect = QGraphicsOpacityEffect(self)
@@ -1037,13 +1042,21 @@ class MainWindow(FramelessWindow):
         self.btn_repeat.setIcon(get_svg_icon("repeat", 12, QColor(255, 255, 255, 165)))
         self.btn_repeat.clicked.connect(self._on_btn_repeat_clicked)
 
-        # Hidden mute button helper for tests & CoreAudio integration
+        # Minimalist speaker icon placed directly in front of the volume slant (no hover effects)
         self.btn_mute = QPushButton(self._media_tile_frame)
-        self.btn_mute.hide()
+        self.btn_mute.setFixedSize(16, 16)
+        self.btn_mute.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_mute.setStyleSheet(
+            "QPushButton { background: transparent; border: none; padding: 0px; margin: 0px; }"
+            "QPushButton:hover { background: transparent; border: none; }"
+            "QPushButton:pressed { background: transparent; border: none; }"
+        )
+        self.btn_mute.setIcon(get_svg_icon("volume", 13, QColor(255, 255, 255, 220)))
+        self.btn_mute.setToolTip("Mute / Unmute Computer Audio")
         self.btn_mute.clicked.connect(self._on_btn_mute_clicked)
 
         # Polished dynamic VLC-style volume wedge (0 to 100%, shifted left, synchronized with lyrics accent)
-        self.slider_volume = VolumeWedgeWidget(self._media_tile_frame, initial_value=100, wedge_width=70, wedge_height=14)
+        self.slider_volume = VolumeWedgeWidget(self._media_tile_frame, initial_value=100, wedge_width=66, wedge_height=14)
         self.slider_volume.setToolTip("System Volume")
         self.slider_volume.set_accent_color(self._current_accent)
         self.slider_volume.valueChanged.connect(self._on_volume_slider_changed)
@@ -1055,11 +1068,13 @@ class MainWindow(FramelessWindow):
         controls_layout.addWidget(self.btn_play_pause, 0, Qt.AlignmentFlag.AlignVCenter)
         controls_layout.addSpacing(6)
         controls_layout.addWidget(self.btn_next, 0, Qt.AlignmentFlag.AlignVCenter)
-        controls_layout.addSpacing(14)
+        controls_layout.addSpacing(12)
         controls_layout.addWidget(self.btn_shuffle, 0, Qt.AlignmentFlag.AlignVCenter)
         controls_layout.addSpacing(4)
         controls_layout.addWidget(self.btn_repeat, 0, Qt.AlignmentFlag.AlignVCenter)
-        controls_layout.addSpacing(12)
+        controls_layout.addSpacing(10)
+        controls_layout.addWidget(self.btn_mute, 0, Qt.AlignmentFlag.AlignVCenter)
+        controls_layout.addSpacing(4)
         controls_layout.addWidget(self.slider_volume, 0, Qt.AlignmentFlag.AlignVCenter)
 
         info_layout.addLayout(source_row)
@@ -1431,7 +1446,20 @@ class MainWindow(FramelessWindow):
         # Update expanded card metadata
         self.title_label.setText(track.title)
         self.artist_label.setText(track.artist)
-        self._update_album_art(track.album_art_bytes)
+
+        art_bytes_to_use = track.album_art_bytes
+        if art_bytes_to_use:
+            self._artwork_resolver.cache_artwork(track.title, track.artist, art_bytes_to_use)
+            self._update_album_art(art_bytes_to_use)
+        else:
+            cached = self._artwork_resolver.get_cached_artwork(track.title, track.artist)
+            if cached:
+                art_bytes_to_use = cached
+                self._update_album_art(cached)
+            else:
+                self._update_album_art(None)
+                if track.title and track.title != "No Media Playing":
+                    self._artwork_resolver.resolve_artwork_async(track.title, track.artist)
 
         track_sig = (str(track.title or ""), str(track.artist or ""))
         if track_sig != self._last_lyric_track_sig:
@@ -1447,7 +1475,7 @@ class MainWindow(FramelessWindow):
             self._lyrics_provider.fetch_lyrics_async(track.title, track.artist, track.duration_ms)
 
         # Dynamic album art accent extraction & styling (guaranteed bright luminous colors)
-        raw_accent = extract_dominant_color(track.album_art_bytes)
+        raw_accent = extract_dominant_color(art_bytes_to_use)
         self._current_accent = ensure_bright_accent_color(raw_accent)
         self.progress_slider.setStyleSheet(get_slider_stylesheet(self._current_accent))
         self.slider_volume.setStyleSheet(get_slider_stylesheet(self._current_accent))
@@ -1561,6 +1589,28 @@ class MainWindow(FramelessWindow):
             self.on_status_changed(PlaybackStatus.CLOSED)
             # Session closed -> transition to HIDDEN while process remains alive
             self.set_state(DynamicIslandState.HIDDEN)
+
+    def _on_online_artwork_resolved(self, title: str, artist: str, art_bytes: bytes) -> None:
+        """Slot called when online album artwork has been fetched asynchronously."""
+        if not art_bytes:
+            return
+        cur_title = str(self.title_label.text() or "").strip()
+        cur_artist = str(self.artist_label.text() or "").strip()
+        if (title.lower() in cur_title.lower() or cur_title.lower() in title.lower()) or (
+            artist.lower() in cur_artist.lower() or cur_artist.lower() in artist.lower()
+        ):
+            self._update_album_art(art_bytes)
+            self._current_accent = ensure_bright_accent_color(extract_dominant_color(art_bytes))
+            self._apply_lyrics_style(self._current_accent)
+            self._apply_time_style(self._current_accent)
+            self.progress_slider.setStyleSheet(get_slider_stylesheet(self._current_accent))
+            if hasattr(self.slider_volume, "set_accent_color"):
+                self.slider_volume.set_accent_color(self._current_accent)
+            self._capsule_widget.set_accent_color(self._current_accent)
+            self._visualizer.set_bar_color(self._current_accent)
+            if hasattr(self, "_lyrics_drawer") and self._lyrics_drawer:
+                self._lyrics_drawer.set_accent_color(self._current_accent)
+            self.update()
 
     def _update_album_art(self, art_bytes: Optional[bytes]) -> None:
         """Load raw image bytes into rounded 92x92 QPixmap matching DeskNotch artwork tile."""
