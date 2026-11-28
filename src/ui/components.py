@@ -302,20 +302,18 @@ class VolumeWedgeWidget(QWidget):
                 # Muted state: soft grayed-out glass
                 painter.fillRect(QRectF(0, 0, w, h), QBrush(QColor(255, 255, 255, 40)))
             elif self._accent_color:
-                # Dynamically adapt colors in sync with track lyrics & album art
-                # Boost saturation and brightness for guaranteed high-contrast legibility against dark backgrounds
+                # Dynamically adapt colors in sync with track lyrics & album art using bright luminous tones
                 h_val, s_val, v_val, _ = self._accent_color.getHsvF()
-                if s_val < 0.20:
-                    s_boost = 0.85
+                if s_val < 0.15:
+                    s_boost = 0.65
                     h_val = 0.42  # Emerald/spring green fallback
                 else:
-                    s_boost = min(1.0, max(0.72, s_val * 1.15))
-                v_boost = min(1.0, max(0.90, v_val * 1.15))
+                    s_boost = min(0.78, max(0.45, s_val))
 
-                accent = QColor.fromHsvF(h_val, s_boost, v_boost)
-                c_low = QColor.fromHsvF(h_val, s_boost, v_boost * 0.76)
-                c_mid = accent
-                c_high = QColor.fromHsvF((h_val + 0.04) % 1.0, min(1.0, s_boost * 0.92), 1.0)
+                # All stops have high luminous brightness (no dark muddy edges)
+                c_low = QColor.fromHsvF(h_val, min(0.60, s_boost * 0.85), 0.96)
+                c_mid = QColor.fromHsvF(h_val, s_boost, 1.0)
+                c_high = QColor.fromHsvF((h_val + 0.03) % 1.0, max(0.38, s_boost * 0.72), 1.0)
 
                 grad = QLinearGradient(left, 0, right, 0)
                 grad.setColorAt(0.0, c_low)
@@ -323,13 +321,13 @@ class VolumeWedgeWidget(QWidget):
                 grad.setColorAt(1.0, c_high)
                 painter.fillRect(QRectF(0, 0, w, h), grad)
             else:
-                # Fallback to high-contrast chromatic ramp
+                # Fallback to bright luminous chromatic ramp
                 grad = QLinearGradient(left, 0, right, 0)
-                grad.setColorAt(0.0, QColor("#00FF7F"))   # Vibrant green
-                grad.setColorAt(0.48, QColor("#2ECC71"))  # Emerald green
-                grad.setColorAt(0.72, QColor("#F1C40F"))  # Sun yellow
-                grad.setColorAt(0.88, QColor("#E67E22"))  # Amber
-                grad.setColorAt(1.0, QColor("#FF4757"))   # Coral red at 100%
+                grad.setColorAt(0.0, QColor("#00FF88"))   # Bright mint/spring green
+                grad.setColorAt(0.45, QColor("#00E5FF"))  # Bright cyan
+                grad.setColorAt(0.70, QColor("#FFE043"))  # Bright sun yellow
+                grad.setColorAt(0.88, QColor("#FF9F43"))  # Bright amber
+                grad.setColorAt(1.0, QColor("#FF5277"))   # Bright coral pink at 100%
                 painter.fillRect(QRectF(0, 0, w, h), grad)
 
             painter.restore()

@@ -64,6 +64,7 @@ from src.ui.theme import (
     COLOR_ACCENT_BLUE,
     NotchAppearance,
     create_rounded_pixmap,
+    ensure_bright_accent_color,
     extract_dominant_color,
     get_button_stylesheet,
     get_desknotch_icon_button_stylesheet,
@@ -604,14 +605,29 @@ class MainWindow(FramelessWindow):
         self.update_top_center_position(exp_w, exp_h)
 
     def _apply_lyrics_style(self, accent_color: QColor) -> None:
-        """Style dedicated full-width synchronized lyrics banner outside MediaTile."""
+        """Style dedicated full-width synchronized lyrics banner outside MediaTile with bright, crisp typography."""
+        bright = ensure_bright_accent_color(accent_color)
         if hasattr(self, "lyrics_label"):
             self.lyrics_label.setStyleSheet(
-                f"color: {accent_color.name()};"
-                " background-color: rgba(255, 255, 255, 0.04);"
-                " border: 1px solid rgba(255, 255, 255, 0.07);"
+                f"color: {bright.name()};"
+                " font-weight: 600;"
+                " font-size: 11px;"
+                " background-color: rgba(255, 255, 255, 0.08);"
+                " border: 1px solid rgba(255, 255, 255, 0.14);"
                 " border-radius: 8px;"
                 " padding: 2px 10px;"
+            )
+
+    def _apply_time_style(self, accent_color: QColor) -> None:
+        """Style song elapsed position and duration labels with bright, high-visibility colors in sync with song."""
+        bright = ensure_bright_accent_color(accent_color)
+        if hasattr(self, "lbl_position"):
+            self.lbl_position.setStyleSheet(
+                f"color: {bright.name()}; font-weight: 700; font-size: 9px; background: transparent;"
+            )
+        if hasattr(self, "lbl_duration"):
+            self.lbl_duration.setStyleSheet(
+                f"color: {bright.name()}; font-weight: 700; font-size: 9px; background: transparent; opacity: 0.9;"
             )
 
     def compute_top_center_expanded_geometry(self) -> QRect:
@@ -929,13 +945,13 @@ class MainWindow(FramelessWindow):
         self.artist_label = ElidedLabel("No Media Playing", self._media_tile_frame)
         sub_font = QFont("Segoe UI", 9)
         self.artist_label.setFont(sub_font)
-        self.artist_label.setStyleSheet("color: rgba(255, 255, 255, 0.55); background: transparent;")
+        self.artist_label.setStyleSheet("color: rgba(255, 255, 255, 0.85); background: transparent;")
 
         # Dedicated Full-Width Synchronized Lyrics Strip (outside MediaTile for full visibility without crowding buttons)
         self.lyrics_label = QLabel("", self._expanded_widget)
         lyrics_font = QFont("Segoe UI")
-        lyrics_font.setPointSizeF(8.5)
-        lyrics_font.setItalic(True)
+        lyrics_font.setPointSizeF(9.0)
+        lyrics_font.setWeight(QFont.Weight.DemiBold)
         self.lyrics_label.setFont(lyrics_font)
         self.lyrics_label.setWordWrap(True)
         self.lyrics_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1060,15 +1076,14 @@ class MainWindow(FramelessWindow):
         progress_layout.setContentsMargins(6, 0, 6, 0)
         progress_layout.setSpacing(6)
 
-        time_font = QFont("Segoe UI", 8)
+        time_font = QFont("Segoe UI", 8, QFont.Weight.Bold)
 
         self.lbl_position = QLabel("00:00", self._expanded_widget)
         self.lbl_position.setFont(time_font)
-        self.lbl_position.setStyleSheet("color: rgba(255, 255, 255, 0.50);")
 
         self.lbl_duration = QLabel("00:00", self._expanded_widget)
         self.lbl_duration.setFont(time_font)
-        self.lbl_duration.setStyleSheet("color: rgba(255, 255, 255, 0.50);")
+        self._apply_time_style(self._current_accent)
 
         self.progress_slider = InteractiveScrubSlider(Qt.Orientation.Horizontal, self._expanded_widget)
         self.progress_slider.setRange(0, 0)
@@ -1431,8 +1446,9 @@ class MainWindow(FramelessWindow):
         if self._settings_manager.get_lyrics_enabled() and track and track.title:
             self._lyrics_provider.fetch_lyrics_async(track.title, track.artist, track.duration_ms)
 
-        # Dynamic album art accent extraction & styling
-        self._current_accent = extract_dominant_color(track.album_art_bytes)
+        # Dynamic album art accent extraction & styling (guaranteed bright luminous colors)
+        raw_accent = extract_dominant_color(track.album_art_bytes)
+        self._current_accent = ensure_bright_accent_color(raw_accent)
         self.progress_slider.setStyleSheet(get_slider_stylesheet(self._current_accent))
         self.slider_volume.setStyleSheet(get_slider_stylesheet(self._current_accent))
         if hasattr(self.slider_volume, "set_accent_color"):
@@ -1440,6 +1456,7 @@ class MainWindow(FramelessWindow):
         self._capsule_widget.set_accent_color(self._current_accent)
         self._visualizer.set_bar_color(self._current_accent)
         self._apply_lyrics_style(self._current_accent)
+        self._apply_time_style(self._current_accent)
         if hasattr(self, "_lyrics_drawer") and self._lyrics_drawer:
             self._lyrics_drawer.set_accent_color(self._current_accent)
         if hasattr(self, "slider_volume") and hasattr(self.slider_volume, "set_accent_color"):

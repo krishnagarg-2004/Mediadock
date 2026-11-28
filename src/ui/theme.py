@@ -101,6 +101,32 @@ def get_svg_icon(
     return QIcon(pixmap)
 
 
+def ensure_bright_accent_color(color: Optional[QColor]) -> QColor:
+    """Ensure an accent color is delightfully bright, luminous, and legible against dark backgrounds.
+    
+    Transforms dark, muddy, or low-contrast shades into vibrant, high-luminance tones
+    while strictly preserving the album art's artistic hue.
+    """
+    if not color or not color.isValid():
+        return COLOR_ACCENT_GREEN
+    h, s, v, a = color.getHsvF()
+    if h < 0:
+        # Grayscale
+        return COLOR_ACCENT_GREEN
+
+    # If the color already has high brightness (V >= 0.88) and healthy saturation, keep it
+    if v >= 0.88 and s >= 0.40:
+        return color
+
+    # For dark, muddy, or low-luminance colors, boost value to 0.96-1.0 while keeping hue intact
+    bright_s = max(0.45, min(0.85, s if s >= 0.20 else 0.80))
+    bright_v = max(0.96, min(1.0, v + 0.50))
+
+    bright_col = QColor()
+    bright_col.setHsvF(h, bright_s, bright_v, a)
+    return bright_col
+
+
 def extract_dominant_color(
     art_bytes: Optional[bytes],
     fallback: QColor = COLOR_ACCENT_GREEN,
@@ -108,7 +134,7 @@ def extract_dominant_color(
     """Extract a vibrant dominant accent color from raw image bytes using PySide6 QImage only.
     
     Downsamples image to 16x16 in memory and samples pixel colors with saturation/luminance filtering.
-    Zero third-party dependencies required.
+    Zero third-party dependencies required. Always returns a bright, luminous color.
     """
     if not art_bytes:
         return fallback
@@ -119,20 +145,22 @@ def extract_dominant_color(
             return fallback
 
         small = image.scaled(16, 16, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        best_color = fallback
+        best_color = None
         best_score = -1.0
 
         for y in range(16):
             for x in range(16):
                 c = small.pixelColor(x, y)
                 h, s, v, _ = c.getHsvF()
-                if s > 0.25 and 0.2 < v < 0.95:
-                    score = s * 1.5 + (1.0 - abs(v - 0.6))
+                if s > 0.20 and v > 0.25:
+                    score = s * 1.5 + v * 1.2
                     if score > best_score:
                         best_score = score
                         best_color = c
 
-        return best_color
+        if best_color is not None:
+            return ensure_bright_accent_color(best_color)
+        return fallback
     except Exception:
         return fallback
 

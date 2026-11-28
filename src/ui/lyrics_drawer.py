@@ -21,6 +21,7 @@ from src.ui.theme import (
     COLOR_TEXT_PRIMARY,
     COLOR_TEXT_MUTED,
     COLOR_ACCENT_GREEN,
+    ensure_bright_accent_color,
     get_button_stylesheet,
 )
 
@@ -39,7 +40,7 @@ class ClickableLyricLine(QLabel):
         self.setFont(QFont("Segoe UI", 11))
         self.setContentsMargins(12, 6, 12, 6)
         self.setStyleSheet(
-            "color: rgba(255, 255, 255, 0.60);"
+            "color: rgba(255, 255, 255, 0.88);"
             "border-radius: 8px;"
             "background-color: transparent;"
         )
@@ -171,8 +172,8 @@ class LyricsDrawerWidget(QWidget):
         root_layout.addWidget(self._card)
 
     def set_accent_color(self, color: QColor) -> None:
-        """Update active lyrics highlight color."""
-        self._accent_color = color
+        """Update active lyrics highlight color with a guaranteed bright luminous tone."""
+        self._accent_color = ensure_bright_accent_color(color)
         self._refresh_highlight()
 
     def set_lyrics(self, lines: List[LyricsLine], track_title: str = "") -> None:
@@ -221,34 +222,34 @@ class LyricsDrawerWidget(QWidget):
             self._scroll_to_active()
 
     def _refresh_highlight(self) -> None:
-        """Apply active and inactive typography styling to lyrics lines."""
-        accent_hex = self._accent_color.name()
+        """Apply active and inactive typography styling to lyrics lines with bright luminous styling."""
+        accent_hex = ensure_bright_accent_color(self._accent_color).name()
 
         for idx, widget in enumerate(self._line_widgets):
             if idx == self._active_index:
-                # Active line: large, bold, accent colored, pill background
+                # Active line: large, bold, bright accent colored, clear frosted pill
                 widget.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
                 widget.setStyleSheet(
                     f"color: {accent_hex};"
-                    f"background-color: rgba(255, 255, 255, 0.10);"
-                    f"border: 1px solid rgba(255, 255, 255, 0.16);"
+                    f"background-color: rgba(255, 255, 255, 0.12);"
+                    f"border: 1px solid rgba(255, 255, 255, 0.22);"
                     "border-radius: 8px;"
                     "padding: 6px 12px;"
                 )
             elif idx < self._active_index:
-                # Past lines: dimmed
+                # Past lines: dimmed but cleanly readable
                 widget.setFont(QFont("Segoe UI", 10))
                 widget.setStyleSheet(
-                    "color: rgba(255, 255, 255, 0.35);"
+                    "color: rgba(255, 255, 255, 0.50);"
                     "background-color: transparent;"
                     "border: none;"
                     "padding: 4px 12px;"
                 )
             else:
-                # Upcoming lines: legible, subtle
-                widget.setFont(QFont("Segoe UI", 10))
+                # Upcoming lines: bright and clearly legible
+                widget.setFont(QFont("Segoe UI", 10, QFont.Weight.Medium))
                 widget.setStyleSheet(
-                    "color: rgba(255, 255, 255, 0.70);"
+                    "color: rgba(255, 255, 255, 0.90);"
                     "background-color: transparent;"
                     "border: none;"
                     "padding: 4px 12px;"
