@@ -212,7 +212,7 @@ class CollapsedNotchWidget(QWidget):
         self.clock_label = QLabel(self)
         clock_font = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
         self.clock_label.setFont(clock_font)
-        self.clock_label.setStyleSheet("color: rgba(255, 255, 255, 0.55);")
+        self.clock_label.setStyleSheet("color: #FFFFFF; font-weight: 600;")
         self.clock_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         self.set_playback_status(PlaybackStatus.CLOSED)

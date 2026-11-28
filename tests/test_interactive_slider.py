@@ -3,7 +3,7 @@
 import unittest
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt, QPointF
-from PySide6.QtGui import QMouseEvent, QWheelEvent
+from PySide6.QtGui import QMouseEvent, QWheelEvent, QColor
 from PySide6.QtCore import QPoint
 
 from src.ui.components import InteractiveScrubSlider, VolumeWedgeWidget
@@ -141,6 +141,24 @@ class TestVolumeWedgeWidget(unittest.TestCase):
         self.wedge.set_muted(True)
         self.assertTrue(self.wedge.is_muted())
         self.assertIn("Muted", self.wedge.toolTip())
+
+    def test_dynamic_accent_color_adaptation(self):
+        # Set vibrant magenta accent color
+        self.wedge.set_accent_color(QColor("#E056FD"))
+        self.assertEqual(self.wedge._accent_color, QColor("#E056FD"))
+        # Right click toggles mute
+        right_click = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPointF(30.0, 8.0),
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.RightButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        toggles = []
+        self.wedge.muteToggled.connect(lambda m: toggles.append(m))
+        self.wedge.mousePressEvent(right_click)
+        self.assertTrue(self.wedge.is_muted())
+        self.assertEqual(toggles, [True])
 
 
 if __name__ == "__main__":

@@ -123,20 +123,22 @@ class VolumeWedgeWidget(QWidget):
     Supports:
     - Click-to-seek and smooth horizontal drag-scrubbing
     - Mouse wheel scrolling (like VLC: +/- 5% per scroll tick)
-    - Full VLC chromatic ramp (Green -> Yellow -> Amber -> Coral/Red at 100%)
+    - Dynamic color adaptation in sync with track lyrics and album art
+    - Smooth tapered organic left nose and rounded right corners
     - Muted desaturated/grayed state
     - Drop-in interface compatibility with QSlider (value, setValue, valueChanged, setRange)
     """
 
     valueChanged = Signal(int)
     sliderMoved = Signal(int)
+    muteToggled = Signal(bool)
 
     def __init__(
         self,
         parent: Optional[QWidget] = None,
         initial_value: int = 100,
-        wedge_width: int = 56,
-        wedge_height: int = 16,
+        wedge_width: int = 70,
+        wedge_height: int = 14,
     ) -> None:
         super().__init__(parent)
         self.setMouseTracking(True)
@@ -193,7 +195,7 @@ class VolumeWedgeWidget(QWidget):
         return self._is_muted
 
     def set_accent_color(self, color: Optional[QColor]) -> None:
-        """Optionally override the chromatic ramp with the track accent color."""
+        """Dynamically adapt gradient ramp colors in sync with track lyrics and album art."""
         self._accent_color = color
         self.update()
 
@@ -203,7 +205,7 @@ class VolumeWedgeWidget(QWidget):
 
     def _update_tooltip(self) -> None:
         status = "Muted" if self._is_muted else f"{self._value}%"
-        self.setToolTip(f"System Volume: {status} (Scroll or Click to adjust)")
+        self.setToolTip(f"System Volume: {status} (Click/Drag or Scroll to adjust)")
 
     def _pos_to_val(self, pos_x: float) -> int:
         pad_x = 2.0
@@ -216,8 +218,11 @@ class VolumeWedgeWidget(QWidget):
             self._is_dragging = True
             new_val = self._pos_to_val(event.position().x())
             self.setValue(new_val)
-            self.valueChanged.emit(new_val)
             self.sliderMoved.emit(new_val)
+            event.accept()
+        elif event.button() == Qt.MouseButton.RightButton:
+            self.set_muted(not self._is_muted)
+            self.muteToggled.emit(self._is_muted)
             event.accept()
         else:
             super().mousePressEvent(event)
@@ -227,7 +232,6 @@ class VolumeWedgeWidget(QWidget):
             new_val = self._pos_to_val(event.position().x())
             if new_val != self._value:
                 self.setValue(new_val)
-                self.valueChanged.emit(new_val)
                 self.sliderMoved.emit(new_val)
             event.accept()
         else:
@@ -249,7 +253,6 @@ class VolumeWedgeWidget(QWidget):
         new_val = max(self._min, min(self._max, self._value + step))
         if new_val != self._value:
             self.setValue(new_val)
-            self.valueChanged.emit(new_val)
             self.sliderMoved.emit(new_val)
         event.accept()
 
@@ -260,27 +263,31 @@ class VolumeWedgeWidget(QWidget):
         w = float(self.width())
         h = float(self.height())
         pad_x = 2.0
-        pad_y = 2.0
+        pad_y = 1.5
 
         left = pad_x
         right = w - pad_x
         bottom = h - pad_y
         top_right = pad_y
-        # Slanted wedge: left edge is thin (3.5px tall), right edge is maximum height
-        h_min = 3.5
+        # Slanted wedge: left edge has an organic rounded bullet nose
+        h_min = 2.8
         top_left = bottom - h_min
 
-        # Construct wedge polygon path
+        # Construct smoothly tapered wedge path (rounded left nose, rounded right corners)
         wedge_path = QPainterPath()
-        wedge_path.moveTo(left, top_left)
-        wedge_path.lineTo(right, top_right)
-        wedge_path.lineTo(right, bottom)
-        wedge_path.lineTo(left, bottom)
+        wedge_path.moveTo(left + 2.0, bottom)
+        wedge_path.lineTo(right - 2.5, bottom)
+        wedge_path.quadTo(right, bottom, right, bottom - 2.5)
+        wedge_path.lineTo(right, top_right + 2.5)
+        wedge_path.quadTo(right, top_right, right - 2.5, top_right)
+        wedge_path.lineTo(left + 2.5, top_left)
+        # Organic curved nose enclosing the left tip
+        wedge_path.quadTo(left, (top_left + bottom) / 2.0, left + 2.0, bottom)
         wedge_path.closeSubpath()
 
         # 1. Unfilled Background Track (dark translucent glass)
         painter.fillPath(wedge_path, QBrush(QColor(0, 0, 0, 95)))
-        painter.strokePath(wedge_path, QPen(QColor(255, 255, 255, 40), 1.0))
+        painter.strokePath(wedge_path, QPen(QColor(255, 255, 255, 38), 1.0))
 
         # 2. Filled Level (clipped to current percentage)
         if self._value > self._min:
@@ -293,10 +300,30 @@ class VolumeWedgeWidget(QWidget):
 
             if self._is_muted:
                 # Muted state: soft grayed-out glass
-                painter.fillRect(QRectF(0, 0, w, h), QBrush(QColor(255, 255, 255, 45)))
+                painter.fillRect(QRectF(0, 0, w, h), QBrush(QColor(255, 255, 255, 40)))
+            elif self._accent_color:
+                # Dynamically adapt colors in sync with track lyrics & album art
+                # Boost saturation and brightness for guaranteed high-contrast legibility against dark backgrounds
+                h_val, s_val, v_val, _ = self._accent_color.getHsvF()
+                if s_val < 0.20:
+                    s_boost = 0.85
+                    h_val = 0.42  # Emerald/spring green fallback
+                else:
+                    s_boost = min(1.0, max(0.72, s_val * 1.15))
+                v_boost = min(1.0, max(0.90, v_val * 1.15))
+
+                accent = QColor.fromHsvF(h_val, s_boost, v_boost)
+                c_low = QColor.fromHsvF(h_val, s_boost, v_boost * 0.76)
+                c_mid = accent
+                c_high = QColor.fromHsvF((h_val + 0.04) % 1.0, min(1.0, s_boost * 0.92), 1.0)
+
+                grad = QLinearGradient(left, 0, right, 0)
+                grad.setColorAt(0.0, c_low)
+                grad.setColorAt(0.55, c_mid)
+                grad.setColorAt(1.0, c_high)
+                painter.fillRect(QRectF(0, 0, w, h), grad)
             else:
-                # Classic VLC chromatic ramp:
-                # Green (low) -> Yellow (mid) -> Amber (high) -> Coral/Red (100%)
+                # Fallback to high-contrast chromatic ramp
                 grad = QLinearGradient(left, 0, right, 0)
                 grad.setColorAt(0.0, QColor("#00FF7F"))   # Vibrant green
                 grad.setColorAt(0.48, QColor("#2ECC71"))  # Emerald green
@@ -308,13 +335,13 @@ class VolumeWedgeWidget(QWidget):
             painter.restore()
 
             # Crisp outline stroke over the filled path
-            painter.strokePath(wedge_path, QPen(QColor(255, 255, 255, 70), 1.0))
+            painter.strokePath(wedge_path, QPen(QColor(255, 255, 255, 65), 1.0))
 
             # Luminous white leading tick mark at the current volume level
-            if fill_x > left + 1.0 and fill_x < right - 1.0:
+            if fill_x > left + 2.0 and fill_x < right - 2.0:
                 t = (fill_x - left) / (right - left)
                 cur_y_top = top_left + t * (top_right - top_left)
-                line_pen = QPen(QColor(255, 255, 255, 220), 1.5)
+                line_pen = QPen(QColor(255, 255, 255, 225), 1.5)
                 painter.setPen(line_pen)
                 painter.drawLine(QPointF(fill_x, cur_y_top), QPointF(fill_x, bottom))
 

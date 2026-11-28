@@ -780,6 +780,8 @@ class MainWindow(FramelessWindow):
             self._capsule_widget.set_appearance(self._appearance)
         if hasattr(self, "_lyrics_drawer") and self._lyrics_drawer:
             self._lyrics_drawer.set_accent_color(self._current_accent)
+        if hasattr(self, "slider_volume") and hasattr(self.slider_volume, "set_accent_color"):
+            self.slider_volume.set_accent_color(self._current_accent)
         self._update_media_tile_style()
         self.update()
 
@@ -944,25 +946,52 @@ class MainWindow(FramelessWindow):
         self._apply_lyrics_style(self._current_accent)
         self.lyrics_label.hide()
 
-        # DeskNotch Transport Controls Row
+        # DeskNotch Transport Controls Row (clean borderless buttons, centered triplet alignment)
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(0, 2, 0, 0)
-        controls_layout.setSpacing(5)
+        controls_layout.setSpacing(0)
         controls_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         icon_btn_qss = get_desknotch_icon_button_stylesheet()
-        play_btn_qss = get_desknotch_play_button_stylesheet()
+
+        # Transparent button stylesheet with zero circular hover artifact
+        transport_btn_qss = (
+            "QPushButton {"
+            "  background-color: transparent;"
+            "  border: none;"
+            "  padding: 0px;"
+            "}"
+            "QPushButton:hover {"
+            "  background-color: transparent;"
+            "}"
+            "QPushButton:pressed {"
+            "  background-color: transparent;"
+            "}"
+        )
+        play_btn_qss = (
+            "QPushButton {"
+            "  background-color: #FFFFFF;"
+            "  border: none;"
+            "  border-radius: 16px;"
+            "  padding: 0px;"
+            "}"
+            "QPushButton:hover {"
+            "  background-color: #FFFFFF;"
+            "}"
+            "QPushButton:pressed {"
+            "  background-color: #E2E2E2;"
+            "}"
+        )
 
         self.btn_prev = QPushButton(self._media_tile_frame)
         self.btn_prev.setFixedSize(26, 26)
         self.btn_prev.setToolTip("Previous Track")
-        self.btn_prev.setStyleSheet(icon_btn_qss)
+        self.btn_prev.setStyleSheet(transport_btn_qss)
         self.btn_prev.setIcon(get_svg_icon("previous", 14, QColor("#E0E0E0")))
         self.btn_prev.clicked.connect(self._on_btn_prev_clicked)
 
-        # Signature DeskNotch solid white circular Play/Pause disc with pitch-black glyph
         self.btn_play_pause = QPushButton(self._media_tile_frame)
-        self.btn_play_pause.setFixedSize(34, 34)
+        self.btn_play_pause.setFixedSize(32, 32)
         self.btn_play_pause.setToolTip("Play / Pause")
         self.btn_play_pause.setStyleSheet(play_btn_qss)
         self.btn_play_pause.setIcon(get_svg_icon("play", 16, QColor("#000000")))
@@ -971,64 +1000,51 @@ class MainWindow(FramelessWindow):
         self.btn_next = QPushButton(self._media_tile_frame)
         self.btn_next.setFixedSize(26, 26)
         self.btn_next.setToolTip("Next Track")
-        self.btn_next.setStyleSheet(icon_btn_qss)
+        self.btn_next.setStyleSheet(transport_btn_qss)
         self.btn_next.setIcon(get_svg_icon("next", 14, QColor("#E0E0E0")))
         self.btn_next.clicked.connect(self._on_btn_next_clicked)
 
         # Shuffle & Repeat Toggles
         self.btn_shuffle = QPushButton(self._media_tile_frame)
-        self.btn_shuffle.setFixedSize(24, 24)
+        self.btn_shuffle.setFixedSize(22, 22)
         self.btn_shuffle.setCheckable(True)
         self.btn_shuffle.setToolTip("Shuffle: Off")
-        self.btn_shuffle.setStyleSheet(icon_btn_qss)
+        self.btn_shuffle.setStyleSheet(transport_btn_qss)
         self.btn_shuffle.setIcon(get_svg_icon("shuffle", 12, QColor(255, 255, 255, 165)))
         self.btn_shuffle.clicked.connect(self._on_btn_shuffle_clicked)
 
         self.btn_repeat = QPushButton(self._media_tile_frame)
-        self.btn_repeat.setFixedSize(24, 24)
+        self.btn_repeat.setFixedSize(22, 22)
         self.btn_repeat.setCheckable(True)
         self.btn_repeat.setToolTip("Repeat: Off")
-        self.btn_repeat.setStyleSheet(icon_btn_qss)
+        self.btn_repeat.setStyleSheet(transport_btn_qss)
         self.btn_repeat.setIcon(get_svg_icon("repeat", 12, QColor(255, 255, 255, 165)))
         self.btn_repeat.clicked.connect(self._on_btn_repeat_clicked)
 
-        # Volume & Mute Controls
+        # Hidden mute button helper for tests & CoreAudio integration
         self.btn_mute = QPushButton(self._media_tile_frame)
-        self.btn_mute.setFixedSize(24, 24)
-        self.btn_mute.setToolTip("Mute Computer Audio")
-        self.btn_mute.setStyleSheet(icon_btn_qss)
-        self.btn_mute.setIcon(get_svg_icon("volume", 13, QColor(255, 255, 255, 165)))
+        self.btn_mute.hide()
         self.btn_mute.clicked.connect(self._on_btn_mute_clicked)
 
-        # VLC-style triangular wedge volume slider (0 to 100%)
-        self.slider_volume = VolumeWedgeWidget(self._media_tile_frame, initial_value=100, wedge_width=52, wedge_height=16)
+        # Polished dynamic VLC-style volume wedge (0 to 100%, shifted left, synchronized with lyrics accent)
+        self.slider_volume = VolumeWedgeWidget(self._media_tile_frame, initial_value=100, wedge_width=70, wedge_height=14)
         self.slider_volume.setToolTip("System Volume")
+        self.slider_volume.set_accent_color(self._current_accent)
         self.slider_volume.valueChanged.connect(self._on_volume_slider_changed)
+        self.slider_volume.muteToggled.connect(lambda _: self._on_btn_mute_clicked())
 
-        self.lbl_volume_percent = QLabel("100%", self._media_tile_frame)
-        self.lbl_volume_percent.setFont(QFont("Segoe UI", 8))
-        self.lbl_volume_percent.setStyleSheet("color: rgba(255, 255, 255, 0.65); font-size: 10px; font-weight: 500;")
-        self.lbl_volume_percent.setFixedWidth(28)
-
-        # Allow wheel scrolling over mute button to also adjust volume like VLC
-        def _mute_wheel_event(event: QWheelEvent) -> None:
-            self.slider_volume.wheelEvent(event)
-        self.btn_mute.wheelEvent = _mute_wheel_event  # type: ignore[assignment]
-
-        controls_layout.addWidget(self.btn_prev)
-        controls_layout.addSpacing(4)
-        controls_layout.addWidget(self.btn_play_pause)
-        controls_layout.addSpacing(4)
-        controls_layout.addWidget(self.btn_next)
+        # Perfectly centered and balanced transport triplet with generous spacing before volume
+        controls_layout.addWidget(self.btn_prev, 0, Qt.AlignmentFlag.AlignVCenter)
         controls_layout.addSpacing(6)
-        controls_layout.addWidget(self.btn_shuffle)
-        controls_layout.addWidget(self.btn_repeat)
+        controls_layout.addWidget(self.btn_play_pause, 0, Qt.AlignmentFlag.AlignVCenter)
+        controls_layout.addSpacing(6)
+        controls_layout.addWidget(self.btn_next, 0, Qt.AlignmentFlag.AlignVCenter)
+        controls_layout.addSpacing(14)
+        controls_layout.addWidget(self.btn_shuffle, 0, Qt.AlignmentFlag.AlignVCenter)
         controls_layout.addSpacing(4)
-        controls_layout.addWidget(self.btn_mute)
-        controls_layout.addSpacing(2)
-        controls_layout.addWidget(self.slider_volume)
-        controls_layout.addSpacing(3)
-        controls_layout.addWidget(self.lbl_volume_percent)
+        controls_layout.addWidget(self.btn_repeat, 0, Qt.AlignmentFlag.AlignVCenter)
+        controls_layout.addSpacing(12)
+        controls_layout.addWidget(self.slider_volume, 0, Qt.AlignmentFlag.AlignVCenter)
 
         info_layout.addLayout(source_row)
         info_layout.addWidget(self.title_label)
@@ -1419,11 +1435,15 @@ class MainWindow(FramelessWindow):
         self._current_accent = extract_dominant_color(track.album_art_bytes)
         self.progress_slider.setStyleSheet(get_slider_stylesheet(self._current_accent))
         self.slider_volume.setStyleSheet(get_slider_stylesheet(self._current_accent))
+        if hasattr(self.slider_volume, "set_accent_color"):
+            self.slider_volume.set_accent_color(self._current_accent)
         self._capsule_widget.set_accent_color(self._current_accent)
         self._visualizer.set_bar_color(self._current_accent)
         self._apply_lyrics_style(self._current_accent)
         if hasattr(self, "_lyrics_drawer") and self._lyrics_drawer:
             self._lyrics_drawer.set_accent_color(self._current_accent)
+        if hasattr(self, "slider_volume") and hasattr(self.slider_volume, "set_accent_color"):
+            self.slider_volume.set_accent_color(self._current_accent)
         self.on_playback_modes_changed(self._shuffle_active, self._repeat_mode)
         self.update()
 
