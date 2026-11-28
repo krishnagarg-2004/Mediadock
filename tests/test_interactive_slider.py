@@ -3,9 +3,10 @@
 import unittest
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt, QPointF
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QMouseEvent, QWheelEvent
+from PySide6.QtCore import QPoint
 
-from src.ui.components import InteractiveScrubSlider
+from src.ui.components import InteractiveScrubSlider, VolumeWedgeWidget
 
 app = QApplication.instance() or QApplication([])
 
@@ -47,6 +48,99 @@ class TestInteractiveScrubSlider(unittest.TestCase):
         )
         self.slider.mouseMoveEvent(move_event)
         self.assertEqual(self.slider.toolTip(), "00:02")
+
+
+class TestVolumeWedgeWidget(unittest.TestCase):
+    """Unit tests for VLC-style triangular wedge volume slider."""
+
+    def setUp(self):
+        self.wedge = VolumeWedgeWidget(initial_value=50, wedge_width=60, wedge_height=16)
+
+    def tearDown(self):
+        self.wedge.deleteLater()
+
+    def test_initial_value_and_clamping(self):
+        self.assertEqual(self.wedge.value(), 50)
+        self.wedge.setValue(150)
+        self.assertEqual(self.wedge.value(), 100)
+        self.wedge.setValue(-20)
+        self.assertEqual(self.wedge.value(), 0)
+
+    def test_click_sets_proportional_volume(self):
+        # Click near middle (e.g. x = 32 of 64 total width)
+        press_event = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPointF(32.0, 8.0),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        self.wedge.mousePressEvent(press_event)
+        self.assertAlmostEqual(self.wedge.value(), 50, delta=5)
+
+    def test_drag_emits_value_changed(self):
+        emitted_values = []
+        self.wedge.valueChanged.connect(lambda v: emitted_values.append(v))
+
+        # Drag from left to 75% position
+        press = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPointF(2.0, 8.0),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        self.wedge.mousePressEvent(press)
+
+        move = QMouseEvent(
+            QMouseEvent.Type.MouseMove,
+            QPointF(47.0, 8.0),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        self.wedge.mouseMoveEvent(move)
+        self.assertTrue(len(emitted_values) >= 2)
+        self.assertAlmostEqual(self.wedge.value(), 75, delta=5)
+
+    def test_wheel_event_adjusts_volume_like_vlc(self):
+        self.wedge.setValue(50)
+        # Scroll up (+120 delta) -> +5%
+        wheel_up = QWheelEvent(
+            QPointF(30.0, 8.0),
+            QPointF(30.0, 8.0),
+            QPoint(0, 0),
+            QPoint(0, 120),
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+            Qt.ScrollPhase.NoScrollPhase,
+            False,
+        )
+        self.wedge.wheelEvent(wheel_up)
+        self.assertEqual(self.wedge.value(), 55)
+
+        # Scroll down (-120 delta) -> -5%
+        wheel_down = QWheelEvent(
+            QPointF(30.0, 8.0),
+            QPointF(30.0, 8.0),
+            QPoint(0, 0),
+            QPoint(0, -120),
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+            Qt.ScrollPhase.NoScrollPhase,
+            False,
+        )
+        self.wedge.wheelEvent(wheel_down)
+        self.assertEqual(self.wedge.value(), 50)
+
+    def test_mute_state_and_tooltip(self):
+        self.wedge.setValue(80)
+        self.assertFalse(self.wedge.is_muted())
+        self.assertIn("80%", self.wedge.toolTip())
+
+        self.wedge.set_muted(True)
+        self.assertTrue(self.wedge.is_muted())
+        self.assertIn("Muted", self.wedge.toolTip())
 
 
 if __name__ == "__main__":

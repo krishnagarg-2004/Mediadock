@@ -96,7 +96,7 @@ python -m src.main
 ```
 
 ### Run Tests & Build `.exe`
-- **Run full automated test suite (327 tests)**:
+- **Run full automated test suite (332 tests)**:
   ```cmd
   .venv\Scripts\python.exe -m unittest discover -s tests
   ```
@@ -130,7 +130,7 @@ Mediadock/
 │   ├── ui/              # Hybrid notch/oval MainWindow, lyrics drawer, SettingsDialog, SystemTray, Hotkeys
 │   ├── utils/           # Windows HKCU Run startup registry helper
 │   └── main.py          # App entrypoint, single-instance guard & tray bootstrap
-├── tests/               # 327 unit & integration tests across 35 test modules
+├── tests/               # 332 unit & integration tests across 35 test modules
 ├── MediaDock.spec       # PyInstaller executable specification
 └── requirements.txt     # Python runtime & build dependencies
 ```
@@ -165,5 +165,6 @@ You can also open a [GitHub Issue](https://github.com/krishnagarg-2004/Mediadock
 - **Windows Audio & Control Connection Upgrade**: Fixed CoreAudio `IAudioEndpointVolume` COM GUID with live external volume/device sync for the card master volume slider & mute button, added `winrt-Windows.Media` support for GSMTC Shuffle/Repeat active button states, cleaned WASAPI COM allocations, and added a one-time permission flow (`Allow & Connect Audio...`) to install/grant UAC permissions for Equalizer APO + `+12 dB` Audio Booster on any Windows PC (**315 tests passing**).
 - **Lyrics, UX Polish & Bug Fixes**: 3-tier synchronized lyrics fetching with metadata sanitization and stale-fetch race handling; fixed shuffle/repeat active-state button highlight (icon color only, no background square); Windows volume OSD overlay restored (zero-GUID event context in CoreAudio calls); mouse-wheel no longer accidentally changes Settings controls — values only change via click; Reset button in Appearance simplified; support contact email added to About page (**322 tests passing**).
 - **V1.0.0 Release Architecture & Enhancements**: Interactive multi-line synchronized lyrics drawer with line auto-scrolling, dynamic album accent highlighting, and click-to-seek playback; dynamic multi-monitor display hotplug and resolution re-anchoring; GitHub Releases update checker in Settings About tab; Inno Setup Windows installer script (`MediaDock-Setup.exe`); and GitHub Actions CI/CD release workflow for automated testing and release publishing (**327 tests passing**).
+- **VLC-Style Chromatic Volume Wedge & Wheel Control**: Upward-sloping triangular wedge volume slider (0-100%) inspired by VLC with classic chromatic ramp (Green -> Yellow -> Amber -> Coral), smooth click-to-seek, horizontal drag scrubbing, mouse-wheel volume scrolling (+/- 5%), muted glass state, and real-time laptop CoreAudio synchronization (**332 tests passing**).
 
 </details>

@@ -18,6 +18,7 @@ from PySide6.QtGui import (
     QAction,
     QGuiApplication,
     QCursor,
+    QWheelEvent,
 )
 
 from PySide6.QtWidgets import (
@@ -51,7 +52,7 @@ from src.core.settings import SettingsManager
 from src.core.fullscreen_detector import is_foreground_fullscreen
 from src.media.lyrics_provider import LyricsProvider
 from src.ui.frameless_window import FramelessWindow, build_desknotch_path
-from src.ui.components import ElidedLabel, InteractiveScrubSlider
+from src.ui.components import ElidedLabel, InteractiveScrubSlider, VolumeWedgeWidget
 from src.ui.components_island import (
     ReactiveVisualizerWidget,
     CollapsedCapsuleWidget,
@@ -999,13 +1000,20 @@ class MainWindow(FramelessWindow):
         self.btn_mute.setIcon(get_svg_icon("volume", 13, QColor(255, 255, 255, 165)))
         self.btn_mute.clicked.connect(self._on_btn_mute_clicked)
 
-        self.slider_volume = QSlider(Qt.Orientation.Horizontal, self._media_tile_frame)
-        self.slider_volume.setRange(0, 100)
-        self.slider_volume.setValue(100)
-        self.slider_volume.setFixedWidth(50)
+        # VLC-style triangular wedge volume slider (0 to 100%)
+        self.slider_volume = VolumeWedgeWidget(self._media_tile_frame, initial_value=100, wedge_width=52, wedge_height=16)
         self.slider_volume.setToolTip("System Volume")
-        self.slider_volume.setStyleSheet(get_slider_stylesheet(self._current_accent))
         self.slider_volume.valueChanged.connect(self._on_volume_slider_changed)
+
+        self.lbl_volume_percent = QLabel("100%", self._media_tile_frame)
+        self.lbl_volume_percent.setFont(QFont("Segoe UI", 8))
+        self.lbl_volume_percent.setStyleSheet("color: rgba(255, 255, 255, 0.65); font-size: 10px; font-weight: 500;")
+        self.lbl_volume_percent.setFixedWidth(28)
+
+        # Allow wheel scrolling over mute button to also adjust volume like VLC
+        def _mute_wheel_event(event: QWheelEvent) -> None:
+            self.slider_volume.wheelEvent(event)
+        self.btn_mute.wheelEvent = _mute_wheel_event  # type: ignore[assignment]
 
         controls_layout.addWidget(self.btn_prev)
         controls_layout.addSpacing(4)
@@ -1017,7 +1025,10 @@ class MainWindow(FramelessWindow):
         controls_layout.addWidget(self.btn_repeat)
         controls_layout.addSpacing(4)
         controls_layout.addWidget(self.btn_mute)
+        controls_layout.addSpacing(2)
         controls_layout.addWidget(self.slider_volume)
+        controls_layout.addSpacing(3)
+        controls_layout.addWidget(self.lbl_volume_percent)
 
         info_layout.addLayout(source_row)
         info_layout.addWidget(self.title_label)
@@ -1178,6 +1189,9 @@ class MainWindow(FramelessWindow):
         self.combo_sessions.blockSignals(False)
 
     def _on_volume_slider_changed(self, value: int) -> None:
+        if hasattr(self, "lbl_volume_percent"):
+            self.lbl_volume_percent.setText(f"{value}%")
+            self.lbl_volume_percent.setStyleSheet("color: rgba(255, 255, 255, 0.65); font-size: 10px; font-weight: 500;")
         if self._is_setting_volume:
             return
         self._is_setting_volume = True
@@ -1192,10 +1206,17 @@ class MainWindow(FramelessWindow):
         if not state.is_supported:
             self.btn_mute.hide()
             self.slider_volume.hide()
+            if hasattr(self, "lbl_volume_percent"):
+                self.lbl_volume_percent.hide()
             return
 
         self.btn_mute.show()
         self.slider_volume.show()
+        if hasattr(self, "lbl_volume_percent"):
+            self.lbl_volume_percent.show()
+
+        if hasattr(self.slider_volume, "set_muted"):
+            self.slider_volume.set_muted(state.is_muted)
 
         if not self._is_setting_volume:
             self._is_setting_volume = True
@@ -1203,6 +1224,14 @@ class MainWindow(FramelessWindow):
                 self.slider_volume.setValue(state.volume_percent)
             finally:
                 self._is_setting_volume = False
+
+        if hasattr(self, "lbl_volume_percent"):
+            if state.is_muted:
+                self.lbl_volume_percent.setText("0%")
+                self.lbl_volume_percent.setStyleSheet("color: rgba(255, 71, 87, 0.85); font-size: 10px; font-weight: 500;")
+            else:
+                self.lbl_volume_percent.setText(f"{state.volume_percent}%")
+                self.lbl_volume_percent.setStyleSheet("color: rgba(255, 255, 255, 0.65); font-size: 10px; font-weight: 500;")
 
         icon_color = QColor("#C1121C") if state.is_muted else QColor("#FFFFFF")
         icon_name = "mute" if state.is_muted or state.volume_percent == 0 else "volume"
