@@ -76,7 +76,10 @@ class ArtworkResolver(QObject):
 
         if art_bytes:
             logger.info("Successfully fetched online album art for %s - %s (%d bytes)", artist, title, len(art_bytes))
-            self.artwork_resolved.emit(orig_title, orig_artist, art_bytes)
+            try:
+                self.artwork_resolved.emit(orig_title, orig_artist, art_bytes)
+            except RuntimeError:
+                pass
 
     @staticmethod
     def _fetch_itunes(title: str, artist: str) -> Optional[bytes]:

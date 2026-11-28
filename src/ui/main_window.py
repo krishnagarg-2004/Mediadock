@@ -38,6 +38,9 @@ from PySide6.QtWidgets import (
 
 from enum import Enum, auto
 
+FROST_WHITE_ACTIVE = QColor("#F4F6F9")
+FROST_WHITE_MUTED = QColor(244, 246, 249, 145)
+
 
 class DynamicIslandState(Enum):
     """Authoritative presentation states for the Dynamic Island."""
@@ -609,30 +612,28 @@ class MainWindow(FramelessWindow):
         self.setFixedSize(exp_w, exp_h)
         self.update_top_center_position(exp_w, exp_h)
 
-    def _apply_lyrics_style(self, accent_color: QColor) -> None:
-        """Style dedicated full-width synchronized lyrics banner outside MediaTile with bright, crisp typography."""
-        bright = ensure_bright_accent_color(accent_color)
+    def _apply_lyrics_style(self, accent_color: Optional[QColor] = None) -> None:
+        """Style dedicated full-width synchronized lyrics banner with crisp frost-white typography over dark frosted pill."""
         if hasattr(self, "lyrics_label"):
             self.lyrics_label.setStyleSheet(
-                f"color: {bright.name()};"
+                "color: #F4F6F9;"
                 " font-weight: 600;"
                 " font-size: 11px;"
-                " background-color: rgba(255, 255, 255, 0.08);"
-                " border: 1px solid rgba(255, 255, 255, 0.14);"
+                " background-color: rgba(10, 12, 16, 0.50);"
+                " border: 1px solid rgba(255, 255, 255, 0.16);"
                 " border-radius: 8px;"
                 " padding: 2px 10px;"
             )
 
-    def _apply_time_style(self, accent_color: QColor) -> None:
-        """Style song elapsed position and duration labels with bright, high-visibility colors in sync with song."""
-        bright = ensure_bright_accent_color(accent_color)
+    def _apply_time_style(self, accent_color: Optional[QColor] = None) -> None:
+        """Style song elapsed position and duration labels with frost-white high-contrast text."""
         if hasattr(self, "lbl_position"):
             self.lbl_position.setStyleSheet(
-                f"color: {bright.name()}; font-weight: 700; font-size: 9px; background: transparent;"
+                "color: rgba(244, 246, 249, 0.92); font-weight: 700; font-size: 9px; background: transparent;"
             )
         if hasattr(self, "lbl_duration"):
             self.lbl_duration.setStyleSheet(
-                f"color: {bright.name()}; font-weight: 700; font-size: 9px; background: transparent; opacity: 0.9;"
+                "color: rgba(244, 246, 249, 0.72); font-weight: 700; font-size: 9px; background: transparent;"
             )
 
     def compute_top_center_expanded_geometry(self) -> QRect:
@@ -936,10 +937,29 @@ class MainWindow(FramelessWindow):
         self.combo_sessions.currentIndexChanged.connect(self._on_session_combo_changed)
         self.combo_sessions.hide()
 
+        # Action Dock Buttons (Pin/Lock & Settings) placed in top-right header row
+        self.btn_pin = QPushButton(self._media_tile_frame)
+        self.btn_pin.setFixedSize(22, 22)
+        self.btn_pin.setCheckable(True)
+        self.btn_pin.setToolTip("Pin Notch Open")
+        self.btn_pin.setStyleSheet(get_desknotch_icon_button_stylesheet())
+        self.btn_pin.setIcon(get_svg_icon("pin", 12, FROST_WHITE_MUTED))
+        self.btn_pin.toggled.connect(self._on_btn_pin_toggled)
+
+        self.btn_settings = QPushButton(self._media_tile_frame)
+        self.btn_settings.setFixedSize(22, 22)
+        self.btn_settings.setToolTip("Settings")
+        self.btn_settings.setStyleSheet(get_desknotch_icon_button_stylesheet())
+        self.btn_settings.setIcon(get_svg_icon("settings", 12, FROST_WHITE_MUTED))
+        self.btn_settings.clicked.connect(lambda: self.open_settings_requested.emit())
+
         source_row.addWidget(self._visualizer)
         source_row.addWidget(self.lbl_source)
         source_row.addWidget(self.combo_sessions)
         source_row.addStretch()
+        source_row.addWidget(self.btn_pin)
+        source_row.addWidget(self.btn_settings)
+        source_row.addSpacing(4)
         source_row.addWidget(self.status_label)
 
         self.title_label = ElidedLabel("MediaDock", self._media_tile_frame)
@@ -1062,19 +1082,19 @@ class MainWindow(FramelessWindow):
         self.slider_volume.valueChanged.connect(self._on_volume_slider_changed)
         self.slider_volume.muteToggled.connect(lambda _: self._on_btn_mute_clicked())
 
-        # Perfectly centered and balanced transport triplet with generous spacing before volume
+        # Transport controls centered with generous spacing before volume
+        controls_layout.addWidget(self.btn_shuffle, 0, Qt.AlignmentFlag.AlignVCenter)
+        controls_layout.addSpacing(6)
         controls_layout.addWidget(self.btn_prev, 0, Qt.AlignmentFlag.AlignVCenter)
         controls_layout.addSpacing(6)
         controls_layout.addWidget(self.btn_play_pause, 0, Qt.AlignmentFlag.AlignVCenter)
         controls_layout.addSpacing(6)
         controls_layout.addWidget(self.btn_next, 0, Qt.AlignmentFlag.AlignVCenter)
-        controls_layout.addSpacing(12)
-        controls_layout.addWidget(self.btn_shuffle, 0, Qt.AlignmentFlag.AlignVCenter)
-        controls_layout.addSpacing(4)
+        controls_layout.addSpacing(6)
         controls_layout.addWidget(self.btn_repeat, 0, Qt.AlignmentFlag.AlignVCenter)
-        controls_layout.addSpacing(10)
+        controls_layout.addSpacing(18)
         controls_layout.addWidget(self.btn_mute, 0, Qt.AlignmentFlag.AlignVCenter)
-        controls_layout.addSpacing(4)
+        controls_layout.addSpacing(6)
         controls_layout.addWidget(self.slider_volume, 0, Qt.AlignmentFlag.AlignVCenter)
 
         info_layout.addLayout(source_row)
@@ -1086,7 +1106,7 @@ class MainWindow(FramelessWindow):
         tile_layout.addWidget(self.art_label)
         tile_layout.addLayout(info_layout)
 
-        # Bottom Section: Interactive Timeline Scrub Bar + Action Dock (Pin & Settings)
+        # Bottom Section: Interactive Timeline Scrub Bar (spans full width between position and duration)
         progress_layout = QHBoxLayout()
         progress_layout.setContentsMargins(6, 0, 6, 0)
         progress_layout.setSpacing(6)
@@ -1110,27 +1130,9 @@ class MainWindow(FramelessWindow):
         self.progress_slider.sliderMoved.connect(self._on_slider_moved)
         self.progress_slider.sliderReleased.connect(self._on_slider_released)
 
-        # DeskNotch Action Dock Buttons (Pin/Lock & Settings)
-        self.btn_pin = QPushButton(self._expanded_widget)
-        self.btn_pin.setFixedSize(24, 24)
-        self.btn_pin.setCheckable(True)
-        self.btn_pin.setToolTip("Pin Notch Open")
-        self.btn_pin.setStyleSheet(icon_btn_qss)
-        self.btn_pin.setIcon(get_svg_icon("pin", 12, QColor(255, 255, 255, 165)))
-        self.btn_pin.toggled.connect(self._on_btn_pin_toggled)
-
-        self.btn_settings = QPushButton(self._expanded_widget)
-        self.btn_settings.setFixedSize(24, 24)
-        self.btn_settings.setToolTip("Settings")
-        self.btn_settings.setStyleSheet(icon_btn_qss)
-        self.btn_settings.setIcon(get_svg_icon("settings", 12, QColor(255, 255, 255, 165)))
-        self.btn_settings.clicked.connect(lambda: self.open_settings_requested.emit())
-
         progress_layout.addWidget(self.lbl_position)
         progress_layout.addWidget(self.progress_slider)
         progress_layout.addWidget(self.lbl_duration)
-        progress_layout.addWidget(self.btn_pin)
-        progress_layout.addWidget(self.btn_settings)
 
         expanded_layout.addWidget(self._media_tile_frame)
         expanded_layout.addWidget(self.lyrics_label)
@@ -1203,7 +1205,7 @@ class MainWindow(FramelessWindow):
         """Pin or unpin expanded notch open (prevents collapse timeout on mouse leave)."""
         self._is_pinned = checked
         icon_name = "pin_active" if checked else "pin"
-        color = QColor("#FFFFFF") if checked else QColor(255, 255, 255, 165)
+        color = FROST_WHITE_ACTIVE if checked else FROST_WHITE_MUTED
         self.btn_pin.setIcon(get_svg_icon(icon_name, 12, color))
         if checked and self._collapse_timer.isActive():
             self._collapse_timer.stop()
@@ -1286,23 +1288,20 @@ class MainWindow(FramelessWindow):
         self.btn_mute.setToolTip("Unmute Computer Audio" if state.is_muted else "Mute Computer Audio")
 
     def on_playback_modes_changed(self, shuffle_active: Optional[bool], repeat_mode: int) -> None:
-        """Update Shuffle and Repeat button checked states, icons, and tooltips from active session."""
+        """Update Shuffle and Repeat button checked states, icons, and tooltips using frost-white tones."""
         self._shuffle_active = shuffle_active
         self._repeat_mode = max(0, min(2, int(repeat_mode or 0)))
-
-        muted_col = QColor(255, 255, 255, 165)
-        active_col = self._current_accent if hasattr(self, "_current_accent") else QColor("#00FF7F")
 
         if hasattr(self, "btn_shuffle"):
             shuf_on = bool(shuffle_active)
             self.btn_shuffle.setChecked(shuf_on)
-            self.btn_shuffle.setIcon(get_svg_icon("shuffle", 12, active_col if shuf_on else muted_col))
+            self.btn_shuffle.setIcon(get_svg_icon("shuffle", 12, FROST_WHITE_ACTIVE if shuf_on else FROST_WHITE_MUTED))
             self.btn_shuffle.setToolTip("Shuffle: On" if shuf_on else "Shuffle: Off")
 
         if hasattr(self, "btn_repeat"):
             rep_on = self._repeat_mode in (1, 2)
             self.btn_repeat.setChecked(rep_on)
-            self.btn_repeat.setIcon(get_svg_icon("repeat", 12, active_col if rep_on else muted_col))
+            self.btn_repeat.setIcon(get_svg_icon("repeat", 12, FROST_WHITE_ACTIVE if rep_on else FROST_WHITE_MUTED))
             if self._repeat_mode == 1:
                 self.btn_repeat.setToolTip("Repeat: Current Track")
             elif self._repeat_mode == 2:
@@ -1515,16 +1514,11 @@ class MainWindow(FramelessWindow):
         self._trigger_track_fade_animation()
 
     def _refresh_source_label(self) -> None:
-        """Update uppercase tracked player header label ('SPOTIFY' vs 'PAUSED · SPOTIFY')."""
+        """Update uppercase tracked player header label without duplicating playback status."""
         if not hasattr(self, "lbl_source"):
             return
         name = self._current_source_display or "MEDIADOCK"
-        if self._current_status == PlaybackStatus.PLAYING:
-            self.lbl_source.setText(name)
-        elif self._current_status == PlaybackStatus.PAUSED:
-            self.lbl_source.setText(f"PAUSED · {name}")
-        else:
-            self.lbl_source.setText(name)
+        self.lbl_source.setText(name)
 
     def on_audio_visualizer_updated(self, bars: list) -> None:
         """Slot for audio_visualizer_updated signal. Updates visualizer bar heights during active playback."""

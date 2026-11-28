@@ -72,7 +72,8 @@ def get_svg_pixmap(
             svg_content = f.read()
 
         if color is not None:
-            svg_content = svg_content.replace("currentColor", color.name())
+            color_str = color.name(QColor.NameFormat.HexArgb) if color.alpha() < 255 else color.name()
+            svg_content = svg_content.replace("currentColor", color_str)
 
         renderer = QSvgRenderer(svg_content.encode("utf-8"))
         pix = QPixmap(size, size)
@@ -473,6 +474,27 @@ def get_scaled_banner_pixmap(
     return cropped
 
 
+def _clamp_surface_tone(
+    color: Optional[QColor],
+    max_sat: float = 0.35,
+    max_val: float = 0.16,
+) -> QColor:
+    """Clamp background gradient, mesh glow, and ambient cover glow colors to dark, muted tones."""
+    if not color or not color.isValid():
+        return QColor("#0E1117")
+    h, s, v, a = color.getHsvF()
+    if h < 0:
+        clamped_v = min(v, max_val)
+        col = QColor()
+        col.setHsvF(0.0, 0.0, clamped_v, a)
+        return col
+    clamped_s = min(s, max_sat)
+    clamped_v = min(v, max_val)
+    col = QColor()
+    col.setHsvF(h, clamped_s, clamped_v, a)
+    return col
+
+
 def build_notch_gradient(
     rect: QRectF,
     style: str,
@@ -494,16 +516,15 @@ def build_notch_gradient(
     elif style == "radial":
         grad = QRadialGradient(rect.center(), max(rect.width(), rect.height()) * 0.65)
     elif style == "conic":
-        grad = QConicalGradient(rect.center(), 45.0)
+        # Remap conic sweep to smooth radial gradient to eliminate sharp seam/pinch through lyrics or controls
+        grad = QRadialGradient(rect.center(), max(rect.width(), rect.height()) * 0.75)
         if c2 is not None:
             grad.setColorAt(0.0, c1)
-            grad.setColorAt(0.35, c2)
-            grad.setColorAt(0.70, c3)
-            grad.setColorAt(1.0, c1)
+            grad.setColorAt(0.50, c2)
+            grad.setColorAt(1.0, c3)
         else:
             grad.setColorAt(0.0, c1)
-            grad.setColorAt(0.5, c3)
-            grad.setColorAt(1.0, c1)
+            grad.setColorAt(1.0, c3)
         return grad
     else:
         # "linear_diag" or base layer of "mesh"
@@ -534,21 +555,25 @@ def paint_notch_surface(
 
     has_rendered_banner = False
     if appearance.bg_mode == "gradient":
+        gc1 = _clamp_surface_tone(appearance.gradient_color_1)
+        gc2 = _clamp_surface_tone(appearance.gradient_color_2) if appearance.gradient_color_2 else None
+        gc3 = _clamp_surface_tone(appearance.gradient_color_3)
         grad = build_notch_gradient(
             rect,
             appearance.gradient_style,
-            appearance.gradient_color_1,
-            appearance.gradient_color_2,
-            appearance.gradient_color_3,
+            gc1,
+            gc2,
+            gc3,
         )
         painter.fillPath(path, grad)
         if appearance.gradient_style == "mesh":
             painter.save()
             painter.setClipPath(path)
             accent_stop = appearance.gradient_color_2 or appearance.gradient_color_3
-            blob_a = QColor(accent_stop)
+            clamped_accent = _clamp_surface_tone(accent_stop, max_sat=0.45, max_val=0.22)
+            blob_a = QColor(clamped_accent)
             blob_a.setAlpha(175)
-            blob_b = QColor(accent_stop)
+            blob_b = QColor(clamped_accent)
             blob_b.setAlpha(0)
             blob_center_x = rect.left() + rect.width() * 0.78
             blob_center_y = rect.top() + rect.height() * 0.25
@@ -598,8 +623,9 @@ def paint_notch_surface(
         glow_cx = rect.left() + 68.0
         glow_cy = rect.top() + 72.0
         glow_grad = QRadialGradient(glow_cx, glow_cy, float(rect.width() * 0.65))
-        c1 = QColor(ambient_accent)
-        c2 = QColor(ambient_accent)
+        clamped_glow = _clamp_surface_tone(ambient_accent, max_sat=0.40, max_val=0.22)
+        c1 = QColor(clamped_glow)
+        c2 = QColor(clamped_glow)
         if has_rendered_banner or appearance.bg_mode == "gradient":
             c1.setAlpha(38)
             c2.setAlpha(8)
@@ -610,6 +636,8 @@ def paint_notch_surface(
         glow_grad.setColorAt(0.55, c2)
         glow_grad.setColorAt(1.0, QColor(0, 0, 0, 0))
         painter.fillRect(rect, glow_grad)
+        # Subtle dark scrim over ambient glow layer so lyrics and frost-white controls remain high-contrast
+        painter.fillRect(rect, QColor(8, 10, 14, 55))
         painter.restore()
 
     # 4. Crisp inner light-catch + outer border

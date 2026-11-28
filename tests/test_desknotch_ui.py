@@ -106,7 +106,8 @@ class TestDeskNotchUI(unittest.TestCase):
         self.assertEqual(win.lbl_source.text(), "SPOTIFY")
 
         win.on_status_changed(PlaybackStatus.PAUSED)
-        self.assertEqual(win.lbl_source.text(), "PAUSED · SPOTIFY")
+        self.assertEqual(win.lbl_source.text(), "SPOTIFY")
+        self.assertEqual(win.status_label.text(), "PAUSED")
 
     def test_collapsed_notch_clock_thumb_and_pulse(self) -> None:
         notch = CollapsedNotchWidget()
