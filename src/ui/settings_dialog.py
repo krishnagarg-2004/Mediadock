@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QStackedWidget,
+    QTabWidget,
 )
 
 
@@ -1295,9 +1296,93 @@ class SettingsDialog(QDialog):
             "Customize the Dynamic Island using solid hex colors, curated/custom gradients, or personal banner images for the expanded and collapsed views.",
         )
 
-        card_colors, layout_colors = self._create_setting_card(page_app, "Background Style & Hex Colors")
+        # 1. Dual Live Preview Card on Top (Collapsed + Expanded)
+        card_preview, layout_preview = self._create_setting_card(page_app, "Live Preview (Collapsed & Expanded)")
+        preview_stage = QFrame(card_preview)
+        preview_stage.setMinimumHeight(140)
+        preview_stage.setStyleSheet("background-color: #181820; border: 1px dashed #2E2E38; border-radius: 10px;")
+        stage_layout = QHBoxLayout(preview_stage)
+        stage_layout.setContentsMargins(16, 12, 16, 12)
+        stage_layout.setSpacing(24)
+        stage_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.combo_bg_mode = QComboBox(card_colors)
+        self.preview_collapsed_notch = _NotchPreviewCanvas(is_expanded=False, parent=preview_stage)
+        self.preview_expanded_card = _NotchPreviewCanvas(is_expanded=True, parent=preview_stage)
+        # Preserve attribute compatibility with existing tests/inspection
+        self.appearance_preview_pill = self.preview_collapsed_notch
+        self.appearance_preview_title = QLabel("♪  MediaDock — Now Playing", preview_stage)
+        self.appearance_preview_title.hide()
+
+        col_layout = QVBoxLayout()
+        col_layout.setSpacing(8)
+        col_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_col_cap = QLabel("Collapsed Notch (220×34)", preview_stage)
+        lbl_col_cap.setStyleSheet("color: #8A8A9A; font-size: 11px; font-weight: 600; background: transparent; border: none;")
+        lbl_col_cap.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        col_layout.addWidget(lbl_col_cap)
+        col_layout.addWidget(self.preview_collapsed_notch, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        exp_layout = QVBoxLayout()
+        exp_layout.setSpacing(8)
+        exp_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_exp_cap = QLabel("Expanded Oval (290×108)", preview_stage)
+        lbl_exp_cap.setStyleSheet("color: #8A8A9A; font-size: 11px; font-weight: 600; background: transparent; border: none;")
+        lbl_exp_cap.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        exp_layout.addWidget(lbl_exp_cap)
+        exp_layout.addWidget(self.preview_expanded_card, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        stage_layout.addLayout(col_layout)
+        stage_layout.addLayout(exp_layout)
+        layout_preview.addWidget(preview_stage)
+        layout_app.addWidget(card_preview)
+
+        # Validation error banner on Appearance page
+        self.lbl_appearance_error = QLabel("", page_app)
+        self.lbl_appearance_error.setStyleSheet("color: #F38BA8; font-size: 12px; font-weight: 600; padding: 4px;")
+        self.lbl_appearance_error.setWordWrap(True)
+        self.lbl_appearance_error.hide()
+        layout_app.addWidget(self.lbl_appearance_error)
+
+        # 2. Horizontal Tabs for the 3 configuration sections
+        self.tabs_appearance = QTabWidget(page_app)
+        self.tabs_appearance.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid #282834;
+                background-color: #181820;
+                border-radius: 10px;
+                padding: 12px;
+            }
+            QTabBar::tab {
+                background-color: #121218;
+                color: #A6ADC8;
+                border: 1px solid #252532;
+                border-bottom: none;
+                padding: 8px 18px;
+                margin-right: 6px;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QTabBar::tab:selected {
+                background-color: #181820;
+                color: #00FF7F;
+                border-top: 2px solid #00FF7F;
+                border-bottom: 1px solid #181820;
+            }
+            QTabBar::tab:hover:!selected {
+                background-color: #1E1E28;
+                color: #CDD6F4;
+            }
+        """)
+
+        # Tab 0: Background Style & Hex Colors
+        tab_colors = QWidget()
+        layout_colors = QVBoxLayout(tab_colors)
+        layout_colors.setContentsMargins(8, 8, 8, 8)
+        layout_colors.setSpacing(10)
+
+        self.combo_bg_mode = QComboBox(tab_colors)
         self.combo_bg_mode.addItem("Solid Color", "solid")
         self.combo_bg_mode.addItem("Gradient", "gradient")
         self.combo_bg_mode.addItem("Custom Banner Image", "image")
@@ -1310,7 +1395,7 @@ class SettingsDialog(QDialog):
             "Choose solid color fill, multi-stop gradient, or custom banner images.",
         )
 
-        self.swatch_bg_preview, self.txt_bg_color_hex = self._create_hex_color_control(card_colors, "#000000")
+        self.swatch_bg_preview, self.txt_bg_color_hex = self._create_hex_color_control(tab_colors, "#000000")
         self._add_control_row(
             layout_colors,
             "Background Color (Hex)",
@@ -1319,7 +1404,7 @@ class SettingsDialog(QDialog):
             extra_controls=[self.swatch_bg_preview],
         )
 
-        self.swatch_border_preview, self.txt_border_color_hex = self._create_hex_color_control(card_colors, "#000000")
+        self.swatch_border_preview, self.txt_border_color_hex = self._create_hex_color_control(tab_colors, "#000000")
         self._add_control_row(
             layout_colors,
             "Border Color (Hex)",
@@ -1328,27 +1413,25 @@ class SettingsDialog(QDialog):
             extra_controls=[self.swatch_border_preview],
         )
 
-        self.lbl_appearance_error = QLabel("", card_colors)
-        self.lbl_appearance_error.setStyleSheet("color: #F38BA8; font-size: 11px;")
-        self.lbl_appearance_error.setWordWrap(True)
-        self.lbl_appearance_error.hide()
-        layout_colors.addWidget(self.lbl_appearance_error)
-
         app_actions_row = QHBoxLayout()
         app_actions_row.setContentsMargins(0, 10, 0, 0)
         app_actions_row.addStretch()
-        self.btn_reset_appearance = QPushButton("Reset", card_colors)
+        self.btn_reset_appearance = QPushButton("Reset", tab_colors)
         self.btn_reset_appearance.setFixedHeight(30)
         self.btn_reset_appearance.setStyleSheet(get_button_stylesheet())
         self.btn_reset_appearance.clicked.connect(self._reset_appearance_defaults)
         app_actions_row.addWidget(self.btn_reset_appearance)
         layout_colors.addLayout(app_actions_row)
-        layout_app.addWidget(card_colors)
+        layout_colors.addStretch(1)
+        self.tabs_appearance.addTab(tab_colors, "Background Style & Hex Colors")
 
-        # Gradient Options Card
-        card_grad, layout_grad = self._create_setting_card(page_app, "Gradient Options")
+        # Tab 1: Gradient Options
+        tab_grad = QWidget()
+        layout_grad = QVBoxLayout(tab_grad)
+        layout_grad.setContentsMargins(8, 8, 8, 8)
+        layout_grad.setSpacing(10)
 
-        self.combo_gradient_preset = QComboBox(card_grad)
+        self.combo_gradient_preset = QComboBox(tab_grad)
         for preset_name in GRADIENT_PRESETS:
             self.combo_gradient_preset.addItem(preset_name, preset_name)
         self.combo_gradient_preset.addItem("Custom", "Custom")
@@ -1361,7 +1444,7 @@ class SettingsDialog(QDialog):
             "Pick a curated multi-stop theme or customize the hex stops below.",
         )
 
-        self.combo_gradient_style = QComboBox(card_grad)
+        self.combo_gradient_style = QComboBox(tab_grad)
         for style_key, style_label in GRADIENT_STYLES:
             self.combo_gradient_style.addItem(style_label, style_key)
         self.combo_gradient_style.setFixedWidth(220)
@@ -1373,7 +1456,7 @@ class SettingsDialog(QDialog):
             "Direction or pattern: horizontal, vertical, diagonal, radial glow, conic sweep, or mesh.",
         )
 
-        self.swatch_grad_1, self.txt_grad_color_1 = self._create_hex_color_control(card_grad, "#071A20")
+        self.swatch_grad_1, self.txt_grad_color_1 = self._create_hex_color_control(tab_grad, "#071A20")
         self.txt_grad_color_1.textChanged.connect(self._on_gradient_hex_edited)
         self._add_control_row(
             layout_grad,
@@ -1383,9 +1466,9 @@ class SettingsDialog(QDialog):
             extra_controls=[self.swatch_grad_1],
         )
 
-        self.swatch_grad_2, self.txt_grad_color_2 = self._create_hex_color_control(card_grad, "Optional")
+        self.swatch_grad_2, self.txt_grad_color_2 = self._create_hex_color_control(tab_grad, "Optional")
         self.txt_grad_color_2.textChanged.connect(self._on_gradient_hex_edited)
-        self.btn_clear_grad_mid = QPushButton("Clear", card_grad)
+        self.btn_clear_grad_mid = QPushButton("Clear", tab_grad)
         self.btn_clear_grad_mid.setFixedSize(56, 30)
         self.btn_clear_grad_mid.setStyleSheet(get_button_stylesheet())
         self.btn_clear_grad_mid.clicked.connect(lambda: self.txt_grad_color_2.setText(""))
@@ -1397,7 +1480,7 @@ class SettingsDialog(QDialog):
             extra_controls=[self.swatch_grad_2, self.txt_grad_color_2],
         )
 
-        self.swatch_grad_3, self.txt_grad_color_3 = self._create_hex_color_control(card_grad, "#1B3B6F")
+        self.swatch_grad_3, self.txt_grad_color_3 = self._create_hex_color_control(tab_grad, "#1B3B6F")
         self.txt_grad_color_3.textChanged.connect(self._on_gradient_hex_edited)
         self._add_control_row(
             layout_grad,
@@ -1406,20 +1489,24 @@ class SettingsDialog(QDialog):
             "Gradient end color.",
             extra_controls=[self.swatch_grad_3],
         )
-        layout_app.addWidget(card_grad)
+        layout_grad.addStretch(1)
+        self.tabs_appearance.addTab(tab_grad, "Gradient Options")
 
-        # Custom Image Banners Card (Expanded & Collapsed)
-        card_banners, layout_banners = self._create_setting_card(page_app, "Custom Image Banners (Expanded & Collapsed)")
+        # Tab 2: Custom Image Banners (Expanded & Collapsed)
+        tab_banners = QWidget()
+        layout_banners = QVBoxLayout(tab_banners)
+        layout_banners.setContentsMargins(8, 8, 8, 8)
+        layout_banners.setSpacing(10)
 
-        self.txt_expanded_image_path = QLineEdit(card_banners)
+        self.txt_expanded_image_path = QLineEdit(tab_banners)
         self.txt_expanded_image_path.setPlaceholderText("Select an image for the expanded card banner (PNG, JPG, WEBP)...")
         self.txt_expanded_image_path.setFixedHeight(32)
         self.txt_expanded_image_path.textChanged.connect(self._on_appearance_hex_changed)
-        self.btn_browse_expanded_image = QPushButton("Browse...", card_banners)
+        self.btn_browse_expanded_image = QPushButton("Browse...", tab_banners)
         self.btn_browse_expanded_image.setFixedSize(78, 32)
         self.btn_browse_expanded_image.setStyleSheet(get_button_stylesheet())
         self.btn_browse_expanded_image.clicked.connect(lambda: self._browse_banner_image("expanded"))
-        self.btn_clear_expanded_image = QPushButton("Clear", card_banners)
+        self.btn_clear_expanded_image = QPushButton("Clear", tab_banners)
         self.btn_clear_expanded_image.setFixedSize(58, 32)
         self.btn_clear_expanded_image.setStyleSheet(get_button_stylesheet())
         self.btn_clear_expanded_image.clicked.connect(lambda: self._clear_banner_image("expanded"))
@@ -1431,19 +1518,19 @@ class SettingsDialog(QDialog):
             [self.btn_browse_expanded_image, self.btn_clear_expanded_image],
         )
 
-        self.txt_collapsed_image_path = QLineEdit(card_banners)
+        self.txt_collapsed_image_path = QLineEdit(tab_banners)
         self.txt_collapsed_image_path.setPlaceholderText("Select an image for the collapsed notch strip...")
         self.txt_collapsed_image_path.setFixedHeight(32)
         self.txt_collapsed_image_path.textChanged.connect(self._on_appearance_hex_changed)
-        self.btn_browse_collapsed_image = QPushButton("Browse...", card_banners)
+        self.btn_browse_collapsed_image = QPushButton("Browse...", tab_banners)
         self.btn_browse_collapsed_image.setFixedSize(78, 32)
         self.btn_browse_collapsed_image.setStyleSheet(get_button_stylesheet())
         self.btn_browse_collapsed_image.clicked.connect(lambda: self._browse_banner_image("collapsed"))
-        self.btn_copy_expanded_to_collapsed = QPushButton("Use Expanded", card_banners)
+        self.btn_copy_expanded_to_collapsed = QPushButton("Use Expanded", tab_banners)
         self.btn_copy_expanded_to_collapsed.setFixedSize(102, 32)
         self.btn_copy_expanded_to_collapsed.setStyleSheet(get_button_stylesheet())
         self.btn_copy_expanded_to_collapsed.clicked.connect(self._copy_expanded_banner_to_collapsed)
-        self.btn_clear_collapsed_image = QPushButton("Clear", card_banners)
+        self.btn_clear_collapsed_image = QPushButton("Clear", tab_banners)
         self.btn_clear_collapsed_image.setFixedSize(58, 32)
         self.btn_clear_collapsed_image.setStyleSheet(get_button_stylesheet())
         self.btn_clear_collapsed_image.clicked.connect(lambda: self._clear_banner_image("collapsed"))
@@ -1459,7 +1546,7 @@ class SettingsDialog(QDialog):
             ],
         )
 
-        self.combo_image_alignment = QComboBox(card_banners)
+        self.combo_image_alignment = QComboBox(tab_banners)
         for align_key, align_label in IMAGE_ALIGNMENTS:
             self.combo_image_alignment.addItem(align_label, align_key)
         self.combo_image_alignment.setFixedWidth(170)
@@ -1471,7 +1558,7 @@ class SettingsDialog(QDialog):
             "Controls whether wide or tall banner photos anchor toward the top, center, or bottom.",
         )
 
-        self.sld_image_dim = QSlider(Qt.Orientation.Horizontal, card_banners)
+        self.sld_image_dim = QSlider(Qt.Orientation.Horizontal, tab_banners)
         self.sld_image_dim.setRange(0, 85)
         self.sld_image_dim.setFixedWidth(160)
         self.sld_image_dim.setStyleSheet(
@@ -1479,7 +1566,7 @@ class SettingsDialog(QDialog):
             "QSlider::sub-page:horizontal { background: #00FF7F; border-radius: 2px; }"
             "QSlider::handle:horizontal { background: #FFFFFF; border: 1px solid #141414; width: 14px; margin-top: -5px; margin-bottom: -5px; border-radius: 7px; }"
         )
-        self.lbl_image_dim_val = QLabel("35%", card_banners)
+        self.lbl_image_dim_val = QLabel("35%", tab_banners)
         self.lbl_image_dim_val.setFixedWidth(40)
         self.lbl_image_dim_val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.lbl_image_dim_val.setStyleSheet(f"color: {COLOR_ACCENT_GREEN.name()}; font-weight: bold;")
@@ -1491,40 +1578,11 @@ class SettingsDialog(QDialog):
             "Dark glass tint above banner images to keep media titles and controls easy to read.",
             extra_controls=[self.sld_image_dim],
         )
-        layout_app.addWidget(card_banners)
+        layout_banners.addStretch(1)
+        self.tabs_appearance.addTab(tab_banners, "Custom Image Banners")
 
-        # Dual Live Preview Card (Collapsed + Expanded)
-        card_preview, layout_preview = self._create_setting_card(page_app, "Live Preview (Collapsed & Expanded)")
-        preview_stage = QFrame(card_preview)
-        preview_stage.setMinimumHeight(190)
-        preview_stage.setStyleSheet("background-color: #181820; border: 1px dashed #2E2E38; border-radius: 10px;")
-        stage_layout = QVBoxLayout(preview_stage)
-        stage_layout.setContentsMargins(16, 12, 16, 12)
-        stage_layout.setSpacing(10)
-        stage_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.preview_collapsed_notch = _NotchPreviewCanvas(is_expanded=False, parent=preview_stage)
-        self.preview_expanded_card = _NotchPreviewCanvas(is_expanded=True, parent=preview_stage)
-        # Preserve attribute compatibility with existing tests/inspection
-        self.appearance_preview_pill = self.preview_collapsed_notch
-        self.appearance_preview_title = QLabel("♪  MediaDock — Now Playing", preview_stage)
-        self.appearance_preview_title.hide()
-
-        lbl_col_cap = QLabel("Collapsed Notch (220×34)", preview_stage)
-        lbl_col_cap.setStyleSheet("color: #8A8A9A; font-size: 10px; background: transparent; border: none;")
-        lbl_col_cap.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        lbl_exp_cap = QLabel("Expanded Oval (410×178)", preview_stage)
-        lbl_exp_cap.setStyleSheet("color: #8A8A9A; font-size: 10px; background: transparent; border: none;")
-        lbl_exp_cap.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        stage_layout.addWidget(lbl_col_cap)
-        stage_layout.addWidget(self.preview_collapsed_notch, 0, Qt.AlignmentFlag.AlignHCenter)
-        stage_layout.addWidget(lbl_exp_cap)
-        stage_layout.addWidget(self.preview_expanded_card, 0, Qt.AlignmentFlag.AlignHCenter)
-
-        layout_preview.addWidget(preview_stage)
-        layout_app.addWidget(card_preview)
+        self.tabs_appearance.currentChanged.connect(self._on_appearance_tab_changed)
+        layout_app.addWidget(self.tabs_appearance)
         layout_app.addStretch(1)
 
         self.stacked_widget.addWidget(page_app)
@@ -2135,9 +2193,42 @@ class SettingsDialog(QDialog):
         if not self._is_updating_ui:
             self._update_appearance_preview()
 
+    def _on_appearance_tab_changed(self, idx: int) -> None:
+        """Keep Background Style and preview in sync with selected appearance tab."""
+        if self._is_updating_ui:
+            return
+        if idx == 0:
+            solid_idx = self.combo_bg_mode.findData("solid")
+            if solid_idx >= 0 and self.combo_bg_mode.currentData() != "solid":
+                self._is_updating_ui = True
+                self.combo_bg_mode.setCurrentIndex(solid_idx)
+                self._is_updating_ui = False
+                self._update_appearance_preview()
+        elif idx == 1:
+            grad_idx = self.combo_bg_mode.findData("gradient")
+            if grad_idx >= 0 and self.combo_bg_mode.currentData() != "gradient":
+                self._is_updating_ui = True
+                self.combo_bg_mode.setCurrentIndex(grad_idx)
+                self._is_updating_ui = False
+                self._update_appearance_preview()
+        elif idx == 2:
+            img_idx = self.combo_bg_mode.findData("image")
+            if img_idx >= 0 and self.combo_bg_mode.currentData() != "image":
+                self._is_updating_ui = True
+                self.combo_bg_mode.setCurrentIndex(img_idx)
+                self._is_updating_ui = False
+                self._update_appearance_preview()
+
     def _on_bg_mode_changed(self) -> None:
         """Refresh appearance previews when Background Style selector changes."""
         if not self._is_updating_ui:
+            mode = str(self.combo_bg_mode.currentData() or "solid")
+            if hasattr(self, "tabs_appearance"):
+                target_idx = 0 if mode == "solid" else (1 if mode == "gradient" else 2)
+                if self.tabs_appearance.currentIndex() != target_idx:
+                    self.tabs_appearance.blockSignals(True)
+                    self.tabs_appearance.setCurrentIndex(target_idx)
+                    self.tabs_appearance.blockSignals(False)
             self._update_appearance_preview()
 
     def _on_gradient_preset_changed(self) -> None:
@@ -2376,9 +2467,13 @@ class SettingsDialog(QDialog):
 
         # Appearance (Solid, Gradient, Banner Images) & Audio Settings
         self._is_updating_ui = True
-        mode_idx = self.combo_bg_mode.findData(self._settings_manager.get_appearance_bg_mode())
+        mode_str = self._settings_manager.get_appearance_bg_mode()
+        mode_idx = self.combo_bg_mode.findData(mode_str)
         if mode_idx >= 0:
             self.combo_bg_mode.setCurrentIndex(mode_idx)
+        if hasattr(self, "tabs_appearance"):
+            target_idx = 0 if mode_str == "solid" else (1 if mode_str == "gradient" else 2)
+            self.tabs_appearance.setCurrentIndex(target_idx)
         self.txt_bg_color_hex.setText(self._settings_manager.get_notch_bg_color())
         self.txt_border_color_hex.setText(self._settings_manager.get_notch_border_color())
 
@@ -2436,6 +2531,13 @@ class SettingsDialog(QDialog):
         self.lbl_appearance_error.setText(message)
         self.lbl_appearance_error.show()
         self.sidebar.setCurrentRow(3)
+        if hasattr(self, "tabs_appearance"):
+            if "gradient" in message.lower():
+                self.tabs_appearance.setCurrentIndex(1)
+            elif "banner" in message.lower() or "image" in message.lower():
+                self.tabs_appearance.setCurrentIndex(2)
+            else:
+                self.tabs_appearance.setCurrentIndex(0)
 
     def save_settings(self) -> None:
         """Validate appearance options & hotkeys, persist values, and apply updates."""
